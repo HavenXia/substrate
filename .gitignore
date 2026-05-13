@@ -1,0 +1,15 @@
+# Binaries
+/ateapi
+/substratectl
+/kubectl-ate
+/atelet
+/bin/
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Local environment variables
+.ate-dev-env.sh

@@ -1,0 +1,573 @@
+#  Copyright 2026 Google LLC
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: prometheus
+  namespace: monitoring
+rules:
+- apiGroups: [""]
+  resources: ["nodes", "nodes/proxy", "services", "endpoints", "pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["extensions", "networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: prometheus
+  namespace: monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: prometheus
+subjects:
+- kind: ServiceAccount
+  name: prometheus
+  namespace: monitoring
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 10s
+    scrape_configs:
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - monitoring
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: monitoring
+  labels:
+    app: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      serviceAccountName: prometheus
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v2.45.0
+        args:
+          - "--config.file=/etc/prometheus/prometheus.yml"
+          - "--storage.tsdb.path=/prometheus/"
+        ports:
+        - containerPort: 9090
+        volumeMounts:
+        - name: config-volume
+          mountPath: /etc/prometheus/
+      volumes:
+      - name: config-volume
+        configMap:
+          name: prometheus-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - protocol: TCP
+      port: 9090
+      targetPort: 9090
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: monitoring
+data:
+  prometheus.yaml: |-
+    apiVersion: 1
+    datasources:
+    - name: Prometheus
+      type: prometheus
+      url: http://prometheus:9090
+      access: proxy
+      isDefault: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-provider
+  namespace: monitoring
+data:
+  provider.yaml: |-
+    apiVersion: 1
+    providers:
+    - name: 'default'
+      orgId: 1
+      folder: 'Locust'
+      type: file
+      disableDeletion: false
+      updateIntervalSeconds: 10
+      editable: true
+      options:
+        path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: monitoring
+data:
+  locust-dashboard.json: |-
+    {
+      "uid": "locust-load-test-dashboard",
+      "title": "ATE API",
+      "panels": [
+        {
+          "title": "GetActor QPS",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "targets": [
+            { "expr": "sum(rate(locust_requests_total_total{name=\"GetActor\", user_class=\"AteAPIUser\"}[1m])) or sum(rate(locust_requests_total{name=\"GetActor\", user_class=\"AteAPIUser\"}[1m]))", "refId": "A", "legendFormat": "Total" },
+            { "expr": "sum(rate(locust_requests_total_total{name=\"GetActor\", user_class=\"AteAPIUser\"}[1m])) by (status) or sum(rate(locust_requests_total{name=\"GetActor\", user_class=\"AteAPIUser\"}[1m])) by (status)", "refId": "B", "legendFormat": "{{status}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "req/sec" } }
+        },
+        {
+          "title": "GetActor Latency 99th Pct",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "targets": [
+            { "expr": "histogram_quantile(0.99, sum(rate(locust_request_duration_milliseconds_bucket{name=\"GetActor\", user_class=\"AteAPIUser\"}[1m])) by (le))", "refId": "A", "legendFormat": "Total" },
+            { "expr": "histogram_quantile(0.99, sum(rate(locust_request_duration_milliseconds_bucket{name=\"GetActor\", user_class=\"AteAPIUser\"}[1m])) by (le, status))", "refId": "B", "legendFormat": "{{status}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "ms" } }
+        },
+        {
+          "title": "GetActor Latency Heatmap",
+          "type": "heatmap",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+          "targets": [
+            {
+              "expr": "sum(rate(locust_request_duration_milliseconds_bucket{name=\"GetActor\", user_class=\"AteAPIUser\"}[1m])) by (le)",
+              "refId": "A"
+            }
+          ],
+
+          "transformations": [
+            {
+              "id": "labelsToFields",
+              "options": {
+                "valueLabel": "le"
+              }
+            }
+          ],
+          "options": {
+            "calculate": false,
+            "yAxis": {
+              "unit": "ms"
+            }
+          }
+        },
+        {
+          "title": "ResumeActor QPS",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+          "targets": [
+            { "expr": "sum(rate(locust_requests_total_total{name=\"ResumeActor\", user_class=\"AteAPIUser\"}[1m])) or sum(rate(locust_requests_total{name=\"ResumeActor\", user_class=\"AteAPIUser\"}[1m]))", "refId": "A", "legendFormat": "Total" },
+            { "expr": "sum(rate(locust_requests_total_total{name=\"ResumeActor\", user_class=\"AteAPIUser\"}[1m])) by (status) or sum(rate(locust_requests_total{name=\"ResumeActor\", user_class=\"AteAPIUser\"}[1m])) by (status)", "refId": "B", "legendFormat": "{{status}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "req/sec" } }
+        },
+        {
+          "title": "ResumeActor Latency 99th Pct",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+          "targets": [
+            { "expr": "histogram_quantile(0.99, sum(rate(locust_request_duration_milliseconds_bucket{name=\"ResumeActor\", user_class=\"AteAPIUser\"}[1m])) by (le))", "refId": "A", "legendFormat": "Total" },
+            { "expr": "histogram_quantile(0.99, sum(rate(locust_request_duration_milliseconds_bucket{name=\"ResumeActor\", user_class=\"AteAPIUser\"}[1m])) by (le, status))", "refId": "B", "legendFormat": "{{status}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "ms" } }
+        },
+        {
+          "title": "ResumeActor Latency Heatmap",
+          "type": "heatmap",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+          "targets": [
+            {
+              "expr": "sum(rate(locust_request_duration_milliseconds_bucket{name=\"ResumeActor\", user_class=\"AteAPIUser\"}[1m])) by (le)",
+              "refId": "A"
+            }
+          ],
+
+          "transformations": [
+            {
+              "id": "labelsToFields",
+              "options": {
+                "valueLabel": "le"
+              }
+            }
+          ],
+          "options": {
+            "calculate": false,
+            "yAxis": {
+              "unit": "ms"
+            }
+          }
+        },
+        {
+          "title": "SuspendActor QPS",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+          "targets": [
+            { "expr": "sum(rate(locust_requests_total_total{name=\"SuspendActor\", user_class=\"AteAPIUser\"}[1m])) or sum(rate(locust_requests_total{name=\"SuspendActor\", user_class=\"AteAPIUser\"}[1m]))", "refId": "A", "legendFormat": "Total" },
+            { "expr": "sum(rate(locust_requests_total_total{name=\"SuspendActor\", user_class=\"AteAPIUser\"}[1m])) by (status) or sum(rate(locust_requests_total{name=\"SuspendActor\", user_class=\"AteAPIUser\"}[1m])) by (status)", "refId": "B", "legendFormat": "{{status}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "req/sec" } }
+        },
+        {
+          "title": "SuspendActor Latency 99th Pct",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+          "targets": [
+            { "expr": "histogram_quantile(0.99, sum(rate(locust_request_duration_milliseconds_bucket{name=\"SuspendActor\", user_class=\"AteAPIUser\"}[1m])) by (le))", "refId": "A", "legendFormat": "Total" },
+            { "expr": "histogram_quantile(0.99, sum(rate(locust_request_duration_milliseconds_bucket{name=\"SuspendActor\", user_class=\"AteAPIUser\"}[1m])) by (le, status))", "refId": "B", "legendFormat": "{{status}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "ms" } }
+        },
+        {
+          "title": "SuspendActor Latency Heatmap",
+          "type": "heatmap",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 40 },
+          "targets": [
+            {
+              "expr": "sum(rate(locust_request_duration_milliseconds_bucket{name=\"SuspendActor\", user_class=\"AteAPIUser\"}[1m])) by (le)",
+              "refId": "A"
+            }
+          ],
+
+          "transformations": [
+            {
+              "id": "labelsToFields",
+              "options": {
+                "valueLabel": "le"
+              }
+            }
+          ],
+          "options": {
+            "calculate": false,
+            "yAxis": {
+              "unit": "ms"
+            }
+          }
+        },
+        {
+          "title": "Locust Requesters (Active Users)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 48 },
+          "targets": [
+            { "expr": "sum(locust_users{user_class=\"AteAPIUser\"}) by (pod)", "refId": "A" }
+          ]
+        }
+      ],
+
+      "schemaVersion": 38,
+      "version": 1
+    }
+  locust-counter-dashboard.json: |-
+    {
+      "uid": "locust-counter-demo-dashboard",
+      "title": "Counter Demo",
+      "panels": [
+        {
+          "title": "ResumeActor QPS",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "targets": [
+            { "expr": "sum(rate(locust_requests_total_total{name=\"ResumeActor\", user_class=\"CounterUser\"}[1m])) or sum(rate(locust_requests_total{name=\"ResumeActor\", user_class=\"CounterUser\"}[1m]))", "refId": "A", "legendFormat": "Total" },
+            { "expr": "sum(rate(locust_requests_total_total{name=\"ResumeActor\", user_class=\"CounterUser\"}[1m])) by (status) or sum(rate(locust_requests_total{name=\"ResumeActor\", user_class=\"CounterUser\"}[1m])) by (status)", "refId": "B", "legendFormat": "{{status}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "req/sec" } }
+        },
+        {
+          "title": "ResumeActor Latency 99th Pct",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "targets": [
+            { "expr": "histogram_quantile(0.99, sum(rate(locust_request_duration_milliseconds_bucket{name=\"ResumeActor\", user_class=\"CounterUser\"}[1m])) by (le))", "refId": "A", "legendFormat": "Total" },
+            { "expr": "histogram_quantile(0.99, sum(rate(locust_request_duration_milliseconds_bucket{name=\"ResumeActor\", user_class=\"CounterUser\"}[1m])) by (le, status))", "refId": "B", "legendFormat": "{{status}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "ms" } }
+        },
+        {
+          "title": "ResumeActor Latency Heatmap",
+          "type": "heatmap",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+          "targets": [
+            {
+              "expr": "sum(rate(locust_request_duration_milliseconds_bucket{name=\"ResumeActor\", user_class=\"CounterUser\"}[1m])) by (le)",
+              "refId": "A"
+            }
+          ],
+          "transformations": [
+            {
+              "id": "labelsToFields",
+              "options": {
+                "valueLabel": "le"
+              }
+            }
+          ],
+          "options": {
+            "calculate": false,
+            "yAxis": {
+              "unit": "ms"
+            }
+          }
+        },
+        {
+          "title": "RunCounter QPS",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+          "targets": [
+            { "expr": "sum(rate(locust_requests_total_total{name=\"RunCounter\", user_class=\"CounterUser\"}[1m])) or sum(rate(locust_requests_total{name=\"RunCounter\", user_class=\"CounterUser\"}[1m]))", "refId": "A", "legendFormat": "Total" },
+            { "expr": "sum(rate(locust_requests_total_total{name=\"RunCounter\", user_class=\"CounterUser\"}[1m])) by (status) or sum(rate(locust_requests_total{name=\"RunCounter\", user_class=\"CounterUser\"}[1m])) by (status)", "refId": "B", "legendFormat": "{{status}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "req/sec" } }
+        },
+        {
+          "title": "RunCounter Latency 99th Pct",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+          "targets": [
+            { "expr": "histogram_quantile(0.99, sum(rate(locust_request_duration_milliseconds_bucket{name=\"RunCounter\", user_class=\"CounterUser\"}[1m])) by (le))", "refId": "A", "legendFormat": "Total" },
+            { "expr": "histogram_quantile(0.99, sum(rate(locust_request_duration_milliseconds_bucket{name=\"RunCounter\", user_class=\"CounterUser\"}[1m])) by (le, status))", "refId": "B", "legendFormat": "{{status}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "ms" } }
+        },
+        {
+          "title": "RunCounter Latency Heatmap",
+          "type": "heatmap",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+          "targets": [
+            {
+              "expr": "sum(rate(locust_request_duration_milliseconds_bucket{name=\"RunCounter\", user_class=\"CounterUser\"}[1m])) by (le)",
+              "refId": "A"
+            }
+          ],
+          "transformations": [
+            {
+              "id": "labelsToFields",
+              "options": {
+                "valueLabel": "le"
+              }
+            }
+          ],
+          "options": {
+            "calculate": false,
+            "yAxis": {
+              "unit": "ms"
+            }
+          }
+        },
+        {
+          "title": "SuspendActor QPS",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+          "targets": [
+            { "expr": "sum(rate(locust_requests_total_total{name=\"SuspendActor\", user_class=\"CounterUser\"}[1m])) or sum(rate(locust_requests_total{name=\"SuspendActor\", user_class=\"CounterUser\"}[1m]))", "refId": "A", "legendFormat": "Total" },
+            { "expr": "sum(rate(locust_requests_total_total{name=\"SuspendActor\", user_class=\"CounterUser\"}[1m])) by (status) or sum(rate(locust_requests_total{name=\"SuspendActor\", user_class=\"CounterUser\"}[1m])) by (status)", "refId": "B", "legendFormat": "{{status}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "req/sec" } }
+        },
+        {
+          "title": "SuspendActor Latency 99th Pct",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+          "targets": [
+            { "expr": "histogram_quantile(0.99, sum(rate(locust_request_duration_milliseconds_bucket{name=\"SuspendActor\", user_class=\"CounterUser\"}[1m])) by (le))", "refId": "A", "legendFormat": "Total" },
+            { "expr": "histogram_quantile(0.99, sum(rate(locust_request_duration_milliseconds_bucket{name=\"SuspendActor\", user_class=\"CounterUser\"}[1m])) by (le, status))", "refId": "B", "legendFormat": "{{status}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "ms" } }
+        },
+        {
+          "title": "SuspendActor Latency Heatmap",
+          "type": "heatmap",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 40 },
+          "targets": [
+            {
+              "expr": "sum(rate(locust_request_duration_milliseconds_bucket{name=\"SuspendActor\", user_class=\"CounterUser\"}[1m])) by (le)",
+              "refId": "A"
+            }
+          ],
+          "transformations": [
+            {
+              "id": "labelsToFields",
+              "options": {
+                "valueLabel": "le"
+              }
+            }
+          ],
+          "options": {
+            "calculate": false,
+            "yAxis": {
+              "unit": "ms"
+            }
+          }
+        },
+        {
+          "title": "Locust Requesters (Active Users)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 48 },
+          "targets": [
+            { "expr": "sum(locust_users{user_class=\"CounterUser\"}) by (pod)", "refId": "A" }
+          ]
+        }
+      ],
+      "schemaVersion": 38,
+      "version": 1
+    }
+  locust-workloads-dashboard.json: |-
+    {
+      "uid": "locust-workloads-dashboard",
+      "title": "Workloads Benchmarking",
+      "panels": [
+        {
+          "title": "QPS by Workload",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "targets": [
+            { "expr": "sum(rate(locust_requests_total_total{user_class=~\"SleepUser|UserMemUser|KernelMemUser\"}[1m])) by (user_class, name) or sum(rate(locust_requests_total{user_class=~\"SleepUser|UserMemUser|KernelMemUser\"}[1m])) by (user_class, name)", "refId": "A", "legendFormat": "{{user_class}} - {{name}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "req/sec" } }
+        },
+        {
+          "title": "Latency 99th Pct by Workload",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "targets": [
+            { "expr": "histogram_quantile(0.99, sum(rate(locust_request_duration_milliseconds_bucket{user_class=~\"SleepUser|UserMemUser|KernelMemUser\"}[1m])) by (le, user_class, name))", "refId": "A", "legendFormat": "{{user_class}} - {{name}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "ms" } }
+        },
+        {
+          "title": "Active Users by Workload",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+          "targets": [
+            { "expr": "sum(locust_users{user_class=~\"SleepUser|UserMemUser|KernelMemUser\"}) by (user_class)", "refId": "A", "legendFormat": "{{user_class}}" }
+          ]
+        }
+      ],
+      "schemaVersion": 38,
+      "version": 1
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:10.0.0
+        env:
+        - name: GF_AUTH_ANONYMOUS_ENABLED
+          value: "true"
+        - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+          value: "Admin"
+        - name: GF_AUTH_DISABLE_LOGIN_FORM
+          value: "true"
+        ports:
+        - containerPort: 3000
+        volumeMounts:
+        - name: grafana-datasources
+          mountPath: /etc/grafana/provisioning/datasources
+        - name: grafana-dashboards-provider
+          mountPath: /etc/grafana/provisioning/dashboards
+        - name: grafana-dashboards
+          mountPath: /var/lib/grafana/dashboards
+      volumes:
+      - name: grafana-datasources
+        configMap:
+          name: grafana-datasources
+      - name: grafana-dashboards-provider
+        configMap:
+          name: grafana-dashboards-provider
+      - name: grafana-dashboards
+        configMap:
+          name: grafana-dashboards
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  selector:
+    app: grafana
+  ports:
+    - protocol: TCP
+      port: 3000
+      targetPort: 3000
