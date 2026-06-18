@@ -30,6 +30,9 @@ import (
 	"github.com/agent-substrate/substrate/pkg/proto/ateapipb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 )
@@ -77,8 +80,31 @@ func (s *LoadActorForResumeStep) Execute(ctx context.Context, input *ResumeInput
 
 func (s *LoadActorForResumeStep) RetryBackoff() *wait.Backoff { return nil }
 
+func eligibleWorkerPools(pools []*atev1alpha1.WorkerPool, templateSelector *metav1.LabelSelector, actorSelector *ateapipb.Selector) (map[types.NamespacedName]struct{}, error) {
+	templateSel := labels.Everything()
+	if templateSelector != nil {
+		sel, err := metav1.LabelSelectorAsSelector(templateSelector)
+		if err != nil {
+			return nil, fmt.Errorf("invalid template worker selector: %w", err)
+		}
+		templateSel = sel
+	}
+
+	actorSel := labels.SelectorFromSet(labels.Set(actorSelector.GetMatchLabels()))
+
+	eligible := make(map[types.NamespacedName]struct{})
+	for _, pool := range pools {
+		set := labels.Set(pool.GetLabels())
+		if templateSel.Matches(set) && actorSel.Matches(set) {
+			eligible[types.NamespacedName{Namespace: pool.GetNamespace(), Name: pool.GetName()}] = struct{}{}
+		}
+	}
+	return eligible, nil
+}
+
 type AssignWorkerStep struct {
-	store store.Interface
+	store            store.Interface
+	workerPoolLister listersv1alpha1.WorkerPoolLister
 }
 
 func (s *AssignWorkerStep) Name() string { return "AssignWorker" }
@@ -87,6 +113,18 @@ func (s *AssignWorkerStep) IsComplete(ctx context.Context, input *ResumeInput, s
 	return state.Actor.GetStatus() == ateapipb.Actor_STATUS_RUNNING, nil
 }
 func (s *AssignWorkerStep) Execute(ctx context.Context, input *ResumeInput, state *ResumeState) error {
+	pools, err := s.workerPoolLister.List(labels.Everything())
+	if err != nil {
+		return fmt.Errorf("while listing worker pools: %w", err)
+	}
+	eligible, err := eligibleWorkerPools(pools, state.ActorTemplate.Spec.WorkerSelector, state.Actor.GetWorkerSelector())
+	if err != nil {
+		return fmt.Errorf("while computing eligible worker pools: %w", err)
+	}
+	if len(eligible) == 0 {
+		return status.Errorf(codes.FailedPrecondition, "no worker pool matches the template and actor selectors")
+	}
+
 	workers, err := s.store.ListWorkers(ctx)
 	if err != nil {
 		return fmt.Errorf("while listing workers: %w", err)
@@ -94,17 +132,30 @@ func (s *AssignWorkerStep) Execute(ctx context.Context, input *ResumeInput, stat
 
 	var assignedWorker *ateapipb.Worker
 
-	// Check if we already have a worker assigned from a previous failed attempt
+	// Check if we already have a worker assigned from a previous failed attempt.
+	// If that worker's pool is no longer eligible (e.g. the actor's
+	// worker_selector was updated after the failed attempt), release it back
+	// to the free pool instead of leaving it claimed forever — nothing else
+	// reclaims a healthy worker whose actor moved on to a different pool.
 	for _, worker := range workers {
-		if worker.GetActorId() == input.ActorID && worker.GetWorkerPool() == state.ActorTemplate.Spec.WorkerPoolRef.Name && worker.GetWorkerNamespace() == state.ActorTemplate.Spec.WorkerPoolRef.Namespace {
+		if worker.GetActorId() != input.ActorID {
+			continue
+		}
+		if _, ok := eligible[types.NamespacedName{Namespace: worker.GetWorkerNamespace(), Name: worker.GetWorkerPool()}]; ok {
 			assignedWorker = worker
 			break
+		}
+		worker.ActorId = ""
+		worker.ActorNamespace = ""
+		worker.ActorTemplate = ""
+		if err := s.store.UpdateWorker(ctx, worker, worker.Version); err != nil {
+			return fmt.Errorf("while releasing stale worker assignment: %w", err)
 		}
 	}
 
 	// If not, find a free one using randomized shuffling
 	if assignedWorker == nil {
-		pickedWorker := s.findFreeWorker(workers, state.ActorTemplate.Spec.WorkerPoolRef.Namespace, state.ActorTemplate.Spec.WorkerPoolRef.Name, state.Actor.GetLatestSnapshotInfo().GetLocal().GetNodeVmsWithLocalSnapshots())
+		pickedWorker := s.findFreeWorker(workers, eligible, state.Actor.GetLatestSnapshotInfo().GetLocal().GetNodeVmsWithLocalSnapshots())
 		if pickedWorker == nil {
 			return status.Errorf(codes.FailedPrecondition, "no free workers available")
 		}
@@ -126,6 +177,7 @@ func (s *AssignWorkerStep) Execute(ctx context.Context, input *ResumeInput, stat
 	state.Actor.AteomPodName = assignedWorker.GetWorkerPod()
 	state.Actor.AteomPodIp = assignedWorker.GetIp()
 	state.Actor.AteomPodUid = assignedWorker.GetWorkerPodUid()
+	state.Actor.WorkerPoolName = assignedWorker.GetWorkerPool()
 
 	if err := s.store.UpdateActor(ctx, state.Actor, state.Actor.GetVersion()); err != nil {
 		return err
@@ -142,13 +194,17 @@ func (s *AssignWorkerStep) RetryBackoff() *wait.Backoff {
 	}
 }
 
-func (s *AssignWorkerStep) findFreeWorker(workers []*ateapipb.Worker, workerPoolNamespace, workerPoolName string, nodesRestrictions []string) *ateapipb.Worker {
+func (s *AssignWorkerStep) findFreeWorker(workers []*ateapipb.Worker, eligible map[types.NamespacedName]struct{}, nodesRestrictions []string) *ateapipb.Worker {
 	var freeWorkers []*ateapipb.Worker
 	for _, worker := range workers {
-		if worker.GetActorId() == "" && worker.GetWorkerPool() == workerPoolName && worker.GetWorkerNamespace() == workerPoolNamespace {
-			if len(nodesRestrictions) == 0 || slices.Contains(nodesRestrictions, worker.GetNodeName()) {
-				freeWorkers = append(freeWorkers, worker)
-			}
+		if worker.GetActorId() != "" {
+			continue
+		}
+		if _, ok := eligible[types.NamespacedName{Namespace: worker.GetWorkerNamespace(), Name: worker.GetWorkerPool()}]; !ok {
+			continue
+		}
+		if len(nodesRestrictions) == 0 || slices.Contains(nodesRestrictions, worker.GetNodeName()) {
+			freeWorkers = append(freeWorkers, worker)
 		}
 	}
 
@@ -248,7 +304,7 @@ func (s *CallAteletRestoreStep) Execute(ctx context.Context, input *ResumeInput,
 		// Booting from scratch: resolve the sandbox binaries from the pool's
 		// SandboxConfig and send them so atelet can fetch and record them.
 		// (Restores above are self-describing via the snapshot manifest.)
-		sandboxAssets, err := resolveSandboxAssets(s.workerPoolLister, s.sandboxConfigLister, state.ActorTemplate)
+		sandboxAssets, err := resolveSandboxAssets(s.workerPoolLister, s.sandboxConfigLister, state.Actor.GetAteomPodNamespace(), state.Actor.GetWorkerPoolName())
 		if err != nil {
 			return fmt.Errorf("while resolving sandbox assets: %w", err)
 		}

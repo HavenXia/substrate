@@ -33,6 +33,8 @@ kind: WorkerPool
 metadata:
   name: agent-pool
   namespace: ate-demo
+  labels:
+    workload: secret-agent
 spec:
   replicas: 10
   ateomImage: ko://github.com/agent-substrate/substrate/cmd/ateom-gvisor
@@ -79,7 +81,7 @@ The `ActorTemplate` defines the code, environment, and state-management policies
 | Field | Type | Description |
 | :--- | :--- | :--- |
 | `containers` | `[]Container` | **Required.** The workload definition (image, command, env, ports). |
-| `workerPoolRef` | `ObjectReference` | **Required.** Pointer to the `WorkerPool` that provides the physical pods for this template. |
+| `workerSelector` | `*LabelSelector` | Optional. Gates which `WorkerPool`s actors from this template may use, by matching against each pool's labels. If unset, all pools are eligible (subject to the actor's own `worker_selector`). |
 | `snapshotsConfig` | `SnapshotsConfig` | **Required.** GCS bucket and folder where memory snapshots are stored. |
 | `pauseImage` | `string` | **Required.** The image used for the sandbox root (e.g. `gcr.io/gke-release/pause`). |
 
@@ -115,9 +117,9 @@ spec:
     command: ["/app/server"]
     ports:
     - containerPort: 80
-  workerPoolRef:
-    name: agent-pool
-    namespace: ate-demo
+  workerSelector:
+    matchLabels:
+      workload: secret-agent
   snapshotsConfig:
     location: gs://my-bucket/snapshots/secret-agent/
 ```

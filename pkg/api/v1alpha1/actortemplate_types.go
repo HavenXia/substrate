@@ -15,7 +15,6 @@
 package v1alpha1
 
 import (
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -158,11 +157,14 @@ type ActorTemplateSpec struct {
 	// +required
 	SnapshotsConfig SnapshotsConfig `json:"snapshotsConfig"`
 
-	// Name of the worker pool to use for the actor.
+	// WorkerSelector restricts which worker pools actors from this template may
+	// use. The scheduler only considers pools whose labels match this selector.
+	// If nil, all pools are eligible (subject to the actor's own worker_selector).
+	// Acts as a gate: the actor's worker_selector can only narrow this set further,
+	// never expand it.
 	//
-	// +required
-	// TODO: clone this type locally and add validation
-	WorkerPoolRef corev1.ObjectReference `json:"workerPoolRef"`
+	// +optional
+	WorkerSelector *metav1.LabelSelector `json:"workerSelector,omitempty"`
 }
 
 // TODO: add validation

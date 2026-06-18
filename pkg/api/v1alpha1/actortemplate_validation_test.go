@@ -95,8 +95,8 @@ func TestActorTemplateValidation(t *testing.T) {
 			SnapshotsConfig: SnapshotsConfig{
 				Location: "gs://test-bucket/test-folder",
 			},
-			WorkerPoolRef: corev1.ObjectReference{
-				Name: "test-pool",
+			WorkerSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"pool": "test-pool"},
 			},
 		},
 	}
@@ -403,8 +403,8 @@ func TestActorTemplateSpecImmutability(t *testing.T) {
 			SnapshotsConfig: SnapshotsConfig{
 				Location: "gs://test-bucket/test-folder",
 			},
-			WorkerPoolRef: corev1.ObjectReference{
-				Name: "test-pool",
+			WorkerSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"pool": "test-pool"},
 			},
 		},
 	}
@@ -426,9 +426,9 @@ func TestActorTemplateSpecImmutability(t *testing.T) {
 			},
 		},
 		{
-			name: "update-worker-pool-ref-name",
+			name: "update-worker-selector",
 			mutate: func(at *ActorTemplate) {
-				at.Spec.WorkerPoolRef.Name = "new-pool"
+				at.Spec.WorkerSelector.MatchLabels["pool"] = "new-pool"
 			},
 		},
 	}

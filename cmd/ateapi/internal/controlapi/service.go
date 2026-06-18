@@ -27,6 +27,7 @@ type Service struct {
 	persistence         store.Interface
 	dialer              *AteletDialer
 	actorTemplateLister listersv1alpha1.ActorTemplateLister
+	workerPoolLister    listersv1alpha1.WorkerPoolLister
 	actorWorkflow       *ActorWorkflow
 }
 
@@ -44,6 +45,7 @@ func NewService(
 	s := &Service{
 		persistence:         persistence,
 		actorTemplateLister: actorTemplateLister,
+		workerPoolLister:    workerPoolLister,
 		dialer:              dialer,
 		actorWorkflow:       NewActorWorkflow(persistence, dialer, actorTemplateLister, workerPoolLister, sandboxConfigLister, kubeClient),
 	}
