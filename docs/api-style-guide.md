@@ -63,13 +63,16 @@ message Worker {
 
 ### 2.3 Character constraints
 
-Both `atespace` and `name` must conform to [DNS-1123 label](https://tools.ietf.org/html/rfc1123) syntax:
+Both `atespace` and `name` must be valid resource names.
+A valid resource name must comply the following rules:
 
 - Lowercase alphanumeric characters and hyphens only.
 - Must start with a lowercase alphanumeric character.
 - Must end with a lowercase alphanumeric character.
 - Maximum 63 characters.
 - Regex: `^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`
+
+Resource names are valid RFC-1123 DNS labels.
 
 ### 2.4 `{Resource}Ref` — compound identity type
 
@@ -150,7 +153,6 @@ Rules:
 - Response **must** be the resource itself — not a `GetActorResponse` wrapper.
 - Request **must** identify the resource with a single `{Resource}Ref` field (atespace-scoped) or `string name` (global-scoped).
 - If the resource does not exist: return `NOT_FOUND`.
-- If the caller lacks permission: return `PERMISSION_DENIED` (checked before existence).
 
 ### 3.2 List
 
@@ -189,7 +191,7 @@ Rules:
 - `next_page_token` **must** be present on every List response message. It **must** be empty when there are no further pages.
 - The repeated resource field **must** use the plural form of the resource name (e.g., `actors`, not `actor`).
 - If a user provides a `page_size` above the maximum, coerce it silently. If a user provides a negative value, return `INVALID_ARGUMENT`.
-- List **may** accept an empty `atespace` to list across all atespaces, if the caller has sufficient permission. Document this clearly if supported.
+- Sorting and filtering as specified in AIP-132 are not supported.
 
 ### 3.3 Create
 
@@ -209,9 +211,8 @@ message CreateActorRequest {
 Rules:
 - RPC name **must** begin with `Create` followed by the singular resource name.
 - Response **must** be the resource itself — not a `CreateActorResponse` wrapper.
-- The resource body is the only field in the request. There are no separate top-level `atespace` or `{resource}_id` fields.
 - `actor.atespace` and `actor.name` are **required** and caller-specified. The server does not generate them.
-- If a resource already exists with the same `(atespace, name)`: return `ALREADY_EXISTS`. If the caller lacks permission to observe the conflicting resource: return `PERMISSION_DENIED`.
+- If a resource already exists with the same `(atespace, name)`: return `ALREADY_EXISTS`.
 
 **Divergence from AIP-133:** AIP-133 separates `parent` + `{resource}_id` from the resource body because AIP-122 makes the resource `name` field output-only (constructed by the server from the parent path). In Substrate's model, `atespace` and `name` are directly caller-specified identity fields on the resource, so duplicating them at the top level of the request adds no information and creates ambiguity about which one wins. The embedded resource is the single source of truth for identity on create.
 
@@ -265,7 +266,6 @@ Rules:
 - Response **must** be `google.protobuf.Empty` (no `DeleteActorResponse` wrapper).
 - Request **must** identify the resource with a `{Resource}Ref` field (atespace-scoped) or `string name` (global-scoped).
 - If the resource does not exist: return `NOT_FOUND`.
-- If the caller lacks permission: return `PERMISSION_DENIED` (checked before existence).
 
 ---
 
@@ -359,9 +359,8 @@ message Actor {
 
 - Type: `string`.
 - A server-assigned [UUID4](https://en.wikipedia.org/wiki/Universally_unique_identifier#Version_4_(random)).
-- Stable across all mutations: updating or "renaming" a resource (changing its `name` in a future API version) does not change its `uid`.
-- Useful for correlation across logs, events, and audit trails where the resource `name` may not be available.
-- All public resources (`ate-apiserver`) **must** include `uid`. Internal resources **should** include it.
+- Useful for correlation across logs, events, and audit trails where the resource `name` may not be available. Also useful
+for controllers that need to do bookeeping and track state associated with the resource.
 
 ### 6.2 `create_time`
 
