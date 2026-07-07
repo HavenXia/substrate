@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1067,6 +1068,56 @@ func TestDeleteAtespace_EmptyAfterActorsRemoved(t *testing.T) {
 	}
 	if err := s.DeleteAtespace(ctx, "team-a"); err != nil {
 		t.Errorf("DeleteAtespace after actor removed = %v, want nil (re-scan should find it empty)", err)
+	}
+}
+
+func TestActorValue_OmitsIdentity(t *testing.T) {
+	mr, s, ctx := setupTest(t)
+	defer mr.Close()
+
+	actor := &ateapipb.Actor{
+		ActorId:                "a1",
+		Atespace:               "team-a",
+		ActorTemplateNamespace: "default",
+		ActorTemplateName:      "tmpl",
+		Status:                 ateapipb.Actor_STATUS_SUSPENDED,
+	}
+	if err := s.CreateActor(ctx, actor); err != nil {
+		t.Fatalf("CreateActor failed: %v", err)
+	}
+
+	assertNoIdentity := func(operation string) {
+		t.Helper()
+		raw, err := mr.Get("actor:team-a:a1")
+		if err != nil {
+			t.Fatalf("raw get after %s failed: %v", operation, err)
+		}
+		if strings.Contains(raw, `"actorId"`) || strings.Contains(raw, `"atespace"`) {
+			t.Errorf("value after %s duplicates key identity: %s", operation, raw)
+		}
+	}
+	assertNoIdentity("create")
+
+	got, err := s.GetActor(ctx, "team-a", "a1")
+	if err != nil {
+		t.Fatalf("GetActor failed: %v", err)
+	}
+	if got.GetAtespace() != "team-a" || got.GetActorId() != "a1" {
+		t.Errorf("GetActor identity = (%q, %q), want (team-a, a1)", got.GetAtespace(), got.GetActorId())
+	}
+
+	got.Status = ateapipb.Actor_STATUS_RUNNING
+	if err := s.UpdateActor(ctx, got, got.GetVersion()); err != nil {
+		t.Fatalf("UpdateActor failed: %v", err)
+	}
+	assertNoIdentity("update")
+
+	actors, _, err := s.ListActors(ctx, "team-a", 10, "")
+	if err != nil {
+		t.Fatalf("ListActors failed: %v", err)
+	}
+	if len(actors) != 1 || actors[0].GetAtespace() != "team-a" || actors[0].GetActorId() != "a1" {
+		t.Errorf("ListActors did not re-populate identity: %v", actors)
 	}
 }
 

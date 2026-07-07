@@ -307,6 +307,27 @@ func (s *Persistence) DebugClearAll(ctx context.Context) error {
 	return err
 }
 
+// marshalStoredActor serializes dbActor for storage, clearing the identity
+// fields as they are stored in the key instead of the value. It mutates
+// dbActor: callers pass a clone they own.
+func marshalStoredActor(dbActor *ateapipb.Actor) ([]byte, error) {
+	dbActor.Atespace = ""
+	dbActor.ActorId = ""
+	return protojson.Marshal(dbActor)
+}
+
+// unmarshalStoredActor parses a stored actor value and backfills the identity
+// from the key components.
+func unmarshalStoredActor(data []byte, atespace, id string) (*ateapipb.Actor, error) {
+	actor := &ateapipb.Actor{}
+	if err := protojson.Unmarshal(data, actor); err != nil {
+		return nil, err
+	}
+	actor.Atespace = atespace
+	actor.ActorId = id
+	return actor, nil
+}
+
 func (s *Persistence) GetActor(ctx context.Context, atespace, id string) (*ateapipb.Actor, error) {
 	dbKey := actorDBKey(atespace, id)
 
@@ -318,13 +339,9 @@ func (s *Persistence) GetActor(ctx context.Context, atespace, id string) (*ateap
 		return nil, fmt.Errorf("while getting actor key %q: %w", dbKey, err)
 	}
 
-	actor := &ateapipb.Actor{}
-	if err := protojson.Unmarshal(dbActorBytes, actor); err != nil {
+	actor, err := unmarshalStoredActor(dbActorBytes, atespace, id)
+	if err != nil {
 		return nil, fmt.Errorf("while unmarshaling actor: %w", err)
-	}
-
-	if actor.GetActorId() != id || actor.GetAtespace() != atespace {
-		return nil, fmt.Errorf("(impossible) mismatch between stored id/atespace and key")
 	}
 
 	return actor, nil
@@ -338,9 +355,9 @@ func (s *Persistence) CreateActor(ctx context.Context, actor *ateapipb.Actor) er
 	dbActor := proto.Clone(actor).(*ateapipb.Actor)
 	dbActor.Version = 1
 
-	dbActorBytes, err := protojson.Marshal(dbActor)
+	dbActorBytes, err := marshalStoredActor(dbActor)
 	if err != nil {
-		return fmt.Errorf("in protojson.Marshal: %w", err)
+		return fmt.Errorf("while marshaling actor: %w", err)
 	}
 
 	ok, err := s.rdb.SetNX(ctx, dbKey, dbActorBytes, 0).Result()
@@ -538,12 +555,6 @@ func (s *Persistence) UpdateActor(ctx context.Context, actor *ateapipb.Actor, ex
 			return store.ErrPersistenceRetry
 		}
 		dbActor.Version = currentActor.GetVersion() + 1
-		if currentActor.GetActorId() != dbActor.GetActorId() {
-			return fmt.Errorf("actor_id is immutable")
-		}
-		if currentActor.GetAtespace() != dbActor.GetAtespace() {
-			return fmt.Errorf("atespace is immutable")
-		}
 		if currentActor.GetActorTemplateNamespace() != dbActor.GetActorTemplateNamespace() {
 			return fmt.Errorf("actor_template_namespace is immutable")
 		}
@@ -551,9 +562,9 @@ func (s *Persistence) UpdateActor(ctx context.Context, actor *ateapipb.Actor, ex
 			return fmt.Errorf("actor_template_name is immutable")
 		}
 
-		newVal, err := protojson.Marshal(dbActor)
+		newVal, err := marshalStoredActor(dbActor)
 		if err != nil {
-			return fmt.Errorf("in protojson.Marshal: %w", err)
+			return fmt.Errorf("while marshaling actor: %w", err)
 		}
 
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
@@ -768,7 +779,7 @@ func (s *Persistence) fetchActors(ctx context.Context, master *redis.Client, key
 	}
 
 	var actors []*ateapipb.Actor
-	for _, cmd := range cmds {
+	for i, cmd := range cmds {
 		getCmd, ok := cmd.(*redis.StringCmd)
 		if !ok {
 			continue
@@ -780,9 +791,13 @@ func (s *Persistence) fetchActors(ctx context.Context, master *redis.Client, key
 			return nil, fmt.Errorf("while getting actor: %w", getCmd.Err())
 		}
 
-		actor := &ateapipb.Actor{}
-		if err := protojson.Unmarshal([]byte(getCmd.Val()), actor); err != nil {
-			return nil, fmt.Errorf("in protojson.Unmarshal: %w", err)
+		parts := strings.Split(keys[i], ":")
+		if len(parts) != 3 {
+			return nil, fmt.Errorf("bad key format %q", keys[i])
+		}
+		actor, err := unmarshalStoredActor([]byte(getCmd.Val()), parts[1], parts[2])
+		if err != nil {
+			return nil, fmt.Errorf("while unmarshaling actor: %w", err)
 		}
 		actors = append(actors, actor)
 	}
