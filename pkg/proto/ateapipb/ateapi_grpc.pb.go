@@ -70,7 +70,7 @@ type ControlClient interface {
 	// Resume an actor from its latest snapshot.
 	ResumeActor(ctx context.Context, in *ResumeActorRequest, opts ...grpc.CallOption) (*ResumeActorResponse, error)
 	// Delete an actor. Only suspended actors can be deleted.
-	DeleteActor(ctx context.Context, in *DeleteActorRequest, opts ...grpc.CallOption) (*DeleteActorResponse, error)
+	DeleteActor(ctx context.Context, in *DeleteActorRequest, opts ...grpc.CallOption) (*Actor, error)
 	// List all workers currently reflected in redis.
 	ListWorkers(ctx context.Context, in *ListWorkersRequest, opts ...grpc.CallOption) (*ListWorkersResponse, error)
 	// List all actors currently reflected in redis.
@@ -82,7 +82,7 @@ type ControlClient interface {
 	// List all Atespaces.
 	ListAtespaces(ctx context.Context, in *ListAtespacesRequest, opts ...grpc.CallOption) (*ListAtespacesResponse, error)
 	// Delete an empty Atespace. Rejects (FailedPrecondition) if any actors remain.
-	DeleteAtespace(ctx context.Context, in *DeleteAtespaceRequest, opts ...grpc.CallOption) (*DeleteAtespaceResponse, error)
+	DeleteAtespace(ctx context.Context, in *DeleteAtespaceRequest, opts ...grpc.CallOption) (*Atespace, error)
 	// Debugging: drop all data from the ate database.
 	DebugClear(ctx context.Context, in *DebugClearRequest, opts ...grpc.CallOption) (*DebugClearResponse, error)
 }
@@ -155,9 +155,9 @@ func (c *controlClient) ResumeActor(ctx context.Context, in *ResumeActorRequest,
 	return out, nil
 }
 
-func (c *controlClient) DeleteActor(ctx context.Context, in *DeleteActorRequest, opts ...grpc.CallOption) (*DeleteActorResponse, error) {
+func (c *controlClient) DeleteActor(ctx context.Context, in *DeleteActorRequest, opts ...grpc.CallOption) (*Actor, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(DeleteActorResponse)
+	out := new(Actor)
 	err := c.cc.Invoke(ctx, Control_DeleteActor_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -215,9 +215,9 @@ func (c *controlClient) ListAtespaces(ctx context.Context, in *ListAtespacesRequ
 	return out, nil
 }
 
-func (c *controlClient) DeleteAtespace(ctx context.Context, in *DeleteAtespaceRequest, opts ...grpc.CallOption) (*DeleteAtespaceResponse, error) {
+func (c *controlClient) DeleteAtespace(ctx context.Context, in *DeleteAtespaceRequest, opts ...grpc.CallOption) (*Atespace, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(DeleteAtespaceResponse)
+	out := new(Atespace)
 	err := c.cc.Invoke(ctx, Control_DeleteAtespace_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -254,7 +254,7 @@ type ControlServer interface {
 	// Resume an actor from its latest snapshot.
 	ResumeActor(context.Context, *ResumeActorRequest) (*ResumeActorResponse, error)
 	// Delete an actor. Only suspended actors can be deleted.
-	DeleteActor(context.Context, *DeleteActorRequest) (*DeleteActorResponse, error)
+	DeleteActor(context.Context, *DeleteActorRequest) (*Actor, error)
 	// List all workers currently reflected in redis.
 	ListWorkers(context.Context, *ListWorkersRequest) (*ListWorkersResponse, error)
 	// List all actors currently reflected in redis.
@@ -266,7 +266,7 @@ type ControlServer interface {
 	// List all Atespaces.
 	ListAtespaces(context.Context, *ListAtespacesRequest) (*ListAtespacesResponse, error)
 	// Delete an empty Atespace. Rejects (FailedPrecondition) if any actors remain.
-	DeleteAtespace(context.Context, *DeleteAtespaceRequest) (*DeleteAtespaceResponse, error)
+	DeleteAtespace(context.Context, *DeleteAtespaceRequest) (*Atespace, error)
 	// Debugging: drop all data from the ate database.
 	DebugClear(context.Context, *DebugClearRequest) (*DebugClearResponse, error)
 	mustEmbedUnimplementedControlServer()
@@ -297,7 +297,7 @@ func (UnimplementedControlServer) PauseActor(context.Context, *PauseActorRequest
 func (UnimplementedControlServer) ResumeActor(context.Context, *ResumeActorRequest) (*ResumeActorResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ResumeActor not implemented")
 }
-func (UnimplementedControlServer) DeleteActor(context.Context, *DeleteActorRequest) (*DeleteActorResponse, error) {
+func (UnimplementedControlServer) DeleteActor(context.Context, *DeleteActorRequest) (*Actor, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteActor not implemented")
 }
 func (UnimplementedControlServer) ListWorkers(context.Context, *ListWorkersRequest) (*ListWorkersResponse, error) {
@@ -315,7 +315,7 @@ func (UnimplementedControlServer) GetAtespace(context.Context, *GetAtespaceReque
 func (UnimplementedControlServer) ListAtespaces(context.Context, *ListAtespacesRequest) (*ListAtespacesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListAtespaces not implemented")
 }
-func (UnimplementedControlServer) DeleteAtespace(context.Context, *DeleteAtespaceRequest) (*DeleteAtespaceResponse, error) {
+func (UnimplementedControlServer) DeleteAtespace(context.Context, *DeleteAtespaceRequest) (*Atespace, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteAtespace not implemented")
 }
 func (UnimplementedControlServer) DebugClear(context.Context, *DebugClearRequest) (*DebugClearResponse, error) {

@@ -27,19 +27,20 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
-func (s *Service) DeleteActor(ctx context.Context, req *ateapipb.DeleteActorRequest) (*ateapipb.DeleteActorResponse, error) {
+func (s *Service) DeleteActor(ctx context.Context, req *ateapipb.DeleteActorRequest) (*ateapipb.Actor, error) {
 	if err := validateDeleteActorRequest(req); err != nil {
 		return nil, err
 	}
 
-	if err := s.persistence.DeleteActor(ctx, req.GetActor().GetAtespace(), req.GetActor().GetName()); err != nil {
+	deleted, err := s.persistence.DeleteActor(ctx, req.GetActor().GetAtespace(), req.GetActor().GetName())
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, status.Errorf(codes.NotFound, "Actor %s not found", req.GetActor().GetName())
 		}
 		if errors.Is(err, store.ErrFailedPrecondition) {
-			actor, getErr := s.persistence.GetActor(ctx, req.GetActor().GetAtespace(), req.GetActor().GetName())
+			current, getErr := s.persistence.GetActor(ctx, req.GetActor().GetAtespace(), req.GetActor().GetName())
 			if getErr == nil {
-				return nil, status.Errorf(codes.FailedPrecondition, "Actor %s is not suspended (status: %v)", req.GetActor().GetName(), actor.GetStatus())
+				return nil, status.Errorf(codes.FailedPrecondition, "Actor %s is not suspended (status: %v)", req.GetActor().GetName(), current.GetStatus())
 			}
 			return nil, status.Errorf(codes.FailedPrecondition, "Actor %s is not suspended", req.GetActor().GetName())
 		}
@@ -49,7 +50,7 @@ func (s *Service) DeleteActor(ctx context.Context, req *ateapipb.DeleteActorRequ
 		return nil, fmt.Errorf("while deleting actor from DB: %w", err)
 	}
 
-	return &ateapipb.DeleteActorResponse{}, nil
+	return deleted, nil
 }
 
 func validateDeleteActorRequest(req *ateapipb.DeleteActorRequest) error {

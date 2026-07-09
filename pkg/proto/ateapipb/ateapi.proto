@@ -44,7 +44,7 @@ service Control {
   rpc ResumeActor(ResumeActorRequest) returns (ResumeActorResponse) {}
 
   // Delete an actor. Only suspended actors can be deleted.
-  rpc DeleteActor(DeleteActorRequest) returns (DeleteActorResponse) {}
+  rpc DeleteActor(DeleteActorRequest) returns (Actor) {}
 
   // List all workers currently reflected in redis.
   rpc ListWorkers(ListWorkersRequest) returns (ListWorkersResponse) {}
@@ -62,7 +62,7 @@ service Control {
   rpc ListAtespaces(ListAtespacesRequest) returns (ListAtespacesResponse) {}
 
   // Delete an empty Atespace. Rejects (FailedPrecondition) if any actors remain.
-  rpc DeleteAtespace(DeleteAtespaceRequest) returns (DeleteAtespaceResponse) {}
+  rpc DeleteAtespace(DeleteAtespaceRequest) returns (Atespace) {}
 
   // Debugging: drop all data from the ate database.
   rpc DebugClear(DebugClearRequest) returns (DebugClearResponse) {}
@@ -193,9 +193,8 @@ message ListAtespacesResponse {
 }
 
 message DeleteAtespaceRequest {
-  string name = 1;
+  ObjectRef atespace = 1;
 }
-message DeleteAtespaceResponse {}
 
 message GetActorRequest {
   ObjectRef actor = 1;
@@ -266,8 +265,6 @@ message ResumeActorResponse {
 message DeleteActorRequest {
   ObjectRef actor = 1;
 }
-
-message DeleteActorResponse {}
 
 message ListWorkersRequest {}
 
