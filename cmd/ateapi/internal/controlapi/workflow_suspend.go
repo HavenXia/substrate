@@ -119,8 +119,11 @@ func (s *CallAteletSuspendStep) Execute(ctx context.Context, input *SuspendInput
 	ateletConn, err := s.dialer.DialForWorker(state.Actor.GetAteomPodNamespace(), state.Actor.GetAteomPodName())
 	if err != nil {
 		if errors.Is(err, ErrWorkerPodNotFound) {
-			slog.Warn("Skipping suspend for dangling worker pod", "namespace", state.Actor.GetAteomPodNamespace(), "pod", state.Actor.GetAteomPodName())
-			return nil
+			slog.ErrorContext(ctx, "Worker pod gone before checkpoint, crashing actor", "namespace", state.Actor.GetAteomPodNamespace(), "pod", state.Actor.GetAteomPodName(), "in_progress_snapshot", state.Actor.GetInProgressSnapshot())
+			if err := crashActor(ctx, s.store, state.Actor.GetMetadata().GetAtespace(), state.Actor.GetMetadata().GetName()); err != nil {
+				slog.ErrorContext(ctx, "Failed to crash actor", slog.String("err", err.Error()))
+			}
+			return fmt.Errorf("actor is CRASHED because its worker pod is gone and no snapshot was written")
 		}
 		return fmt.Errorf("while getting atelet conn for worker pod: %w", err)
 	}
