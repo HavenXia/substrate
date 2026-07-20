@@ -111,7 +111,7 @@ func (s *CallAteletSuspendStep) IsComplete(ctx context.Context, input *SuspendIn
 func (s *CallAteletSuspendStep) Execute(ctx context.Context, input *SuspendInput, state *SuspendState) error {
 	if state.Actor.GetAteomPodNamespace() == "" || state.Actor.GetAteomPodName() == "" {
 		if err := crashActor(ctx, s.store, state.Actor.GetMetadata().GetAtespace(), state.Actor.GetMetadata().GetName()); err != nil {
-			slog.Error("Failed to crash actor", slog.String("err", err.Error()))
+			slog.ErrorContext(ctx, "Failed to crash actor", slog.String("err", err.Error()))
 		}
 		return fmt.Errorf("actor is CRASHED because it was in SUSPENDING state but has no active worker")
 	}
@@ -184,7 +184,7 @@ func (s *FinalizeSuspendedStep) Execute(ctx context.Context, input *SuspendInput
 			if !errors.Is(err, store.ErrNotFound) {
 				return fmt.Errorf("while getting worker for release: %w", err)
 			}
-			slog.Warn("Worker already gone during finalize suspend, skipping release", "worker", workerPod)
+			slog.WarnContext(ctx, "Worker already gone during finalize suspend, skipping release", "worker", workerPod)
 		} else {
 			// Only free it if it still belongs to us
 			if wass := worker.Assignment; wass != nil {
