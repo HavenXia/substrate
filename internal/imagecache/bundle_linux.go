@@ -80,7 +80,21 @@ func SetupBundleRootfs(bundlePath string) error {
 		return fmt.Errorf("while mounting overlay rootfs at %q: %w", rootfs, err)
 	}
 
-	return createExtraDirs(rootfs, spec.ExtraDirs)
+	if err := createExtraDirs(rootfs, spec.ExtraDirs); err != nil {
+		return err
+	}
+
+	// Repair merged directory metadata shadowed by implicitly-created parent
+	// dirs (see implicitdirs.go); the chmod/chowns copy up into this bundle's
+	// private upper, never into the shared pool.
+	fixups, err := resolveImplicitDirFixups(spec.Layers)
+	if err != nil {
+		return fmt.Errorf("while resolving implicit dir metadata: %w", err)
+	}
+	if err := applyDirFixups(rootfs, fixups); err != nil {
+		return fmt.Errorf("while repairing implicit dir metadata: %w", err)
+	}
+	return nil
 }
 
 // mountOverlay attaches an overlay of lowers (top-most first) with the given

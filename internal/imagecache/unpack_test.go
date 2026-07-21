@@ -247,6 +247,36 @@ func TestUnpackLayer_MissingParentDirs(t *testing.T) {
 	}
 }
 
+// Implicitly-created parent dirs must be recorded (their attrs are
+// fabricated and can shadow lower-layer metadata in the merged view);
+// declared dirs must not be, and candidates replaced by non-dirs drop out.
+func TestUnpackLayer_ImplicitDirRecording(t *testing.T) {
+	entries := []tarEntry{
+		{name: "declared/", typeflag: tar.TypeDir},
+		{name: "declared/file", typeflag: tar.TypeReg, body: "x"},
+		{name: "etc/nsswitch.conf", typeflag: tar.TypeReg, body: "hosts: files"},
+		{name: "a/b/c/deep", typeflag: tar.TypeReg, body: "d"},
+		// Parent exists only for a whiteout marker: created at finalize, but
+		// must be recorded now.
+		{name: "gone/.wh.victim", typeflag: tar.TypeReg},
+		// Implicitly created, then declared later: the declaration wins.
+		{name: "late/child", typeflag: tar.TypeReg, body: "c"},
+		{name: "late/", typeflag: tar.TypeDir, mode: 0o700},
+		// Implicit parent whose subtree is later replaced by a file:
+		// no longer a dir, must not be recorded.
+		{name: "swap/inner", typeflag: tar.TypeReg, body: "i"},
+		{name: "swap", typeflag: tar.TypeReg, body: "now a file"},
+	}
+	_, wh, err := runUnpack(t, entries)
+	if err != nil {
+		t.Fatalf("unpackLayer: %v", err)
+	}
+	want := []string{"a", "a/b", "a/b/c", "etc", "gone"}
+	if !slices.Equal(wh.ImplicitDirs, want) {
+		t.Errorf("ImplicitDirs = %v, want %v", wh.ImplicitDirs, want)
+	}
+}
+
 func TestUnpackLayer_LaterEntryWins(t *testing.T) {
 	t.Run("dir then symlink", func(t *testing.T) {
 		entries := []tarEntry{

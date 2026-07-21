@@ -37,15 +37,24 @@ const (
 	opaqueMarkerName = ".wh..wh..opq"
 )
 
-// whiteoutSet records a layer's whiteout state, captured at unpack time and
-// materialized later by FinalizeLayer (which runs with the privileges atelet
-// lacks). Paths are clean and relative to the layer's fs/ root.
+// whiteoutSet records per-layer metadata captured at unpack time that the
+// (privileged) consumer needs at compose time: whiteout state materialized
+// by FinalizeLayer, and the directories this layer only created implicitly.
+// Paths are clean and relative to the layer's fs/ root.
 type whiteoutSet struct {
 	Version int `json:"version"`
 	// Whiteouts are paths that must become 0:0 char devices in the lowerdir.
 	Whiteouts []string `json:"whiteouts,omitempty"`
 	// Opaques are directories that must carry trusted.overlay.opaque=y.
 	Opaques []string `json:"opaques,omitempty"`
+	// ImplicitDirs are directories the layer tar never declared but that
+	// exist in the tree because a child entry (or a whiteout materialized at
+	// finalize) needed a parent. Their root:root 0755 attrs are fabricated;
+	// in the composed overlay the top-most layer containing a directory
+	// supplies its metadata, so an implicit dir here would shadow the real
+	// attrs a lower layer declared (e.g. /tmp's 1777). SetupBundleRootfs
+	// repairs the merged view from these records (see resolveImplicitDirFixups).
+	ImplicitDirs []string `json:"implicitDirs,omitempty"`
 }
 
 func readWhiteouts(layerDir string) (*whiteoutSet, error) {
@@ -98,6 +107,21 @@ func unpackLayer(ctx context.Context, tarData io.Reader, root *os.Root) (*whiteo
 	// CAP_DAC_OVERRIDE. Keyed by name so a repeated dir entry's last mode wins.
 	dirModes := map[string]os.FileMode{}
 
+	// Ancestors an entry needed vs. directories the tar declared: the
+	// difference is recorded as ImplicitDirs (attrs fabricated, see the
+	// whiteoutSet field doc). Whiteout/opaque markers count too — their
+	// parents are created by FinalizeLayer's MkdirAll with the same
+	// fabricated attrs.
+	declared := map[string]bool{}
+	implicit := map[string]bool{}
+	markAncestors := func(name string) {
+		for p := filepath.Dir(name); p != "."; p = filepath.Dir(p) {
+			if !declared[p] {
+				implicit[p] = true
+			}
+		}
+	}
+
 	tarReader := tar.NewReader(tarData)
 	for {
 		hdr, err := tarReader.Next()
@@ -119,6 +143,7 @@ func unpackLayer(ctx context.Context, tarData io.Reader, root *os.Root) (*whiteo
 			if dir := filepath.Dir(name); dir != "." {
 				wh.Opaques = append(wh.Opaques, dir)
 			}
+			markAncestors(name)
 			continue
 		} else if strings.HasPrefix(base, whiteoutPrefix+whiteoutPrefix) {
 			// AUFS bookkeeping entries (.wh..wh.plnk, .wh..wh.aufs, ...);
@@ -126,6 +151,7 @@ func unpackLayer(ctx context.Context, tarData io.Reader, root *os.Root) (*whiteo
 			continue
 		} else if deleted, ok := strings.CutPrefix(base, whiteoutPrefix); ok {
 			wh.Whiteouts = append(wh.Whiteouts, filepath.Join(filepath.Dir(name), deleted))
+			markAncestors(name)
 			continue
 		}
 
@@ -136,6 +162,7 @@ func unpackLayer(ctx context.Context, tarData io.Reader, root *os.Root) (*whiteo
 		// declared only in the base layer). Unpacking per layer, those
 		// parents must be created here; overlayfs merges them with the
 		// lower layers' directories at compose time.
+		markAncestors(name)
 		if parent := filepath.Dir(name); parent != "." {
 			if err := root.MkdirAll(parent, 0o755); err != nil {
 				return nil, fmt.Errorf("while creating parent directories for %q: %w", name, err)
@@ -186,6 +213,8 @@ func unpackLayer(ctx context.Context, tarData io.Reader, root *os.Root) (*whiteo
 				return nil, fmt.Errorf("while creating directory=%q, mode=%v: %w", name, mode, err)
 			}
 			dirModes[name] = mode
+			declared[name] = true
+			delete(implicit, name)
 
 		case tar.TypeSymlink:
 			// A layer may re-define the same path (e.g. declare /var/run as a dir
@@ -254,6 +283,33 @@ func unpackLayer(ctx context.Context, tarData io.Reader, root *os.Root) (*whiteo
 			return nil, fmt.Errorf("while restoring mode %v on directory %q: %w", dirModes[name], name, err)
 		}
 	}
+
+	// Keep only implicit candidates that survive in the tree as directories
+	// ("later entry wins" may have replaced one with a file or symlink), plus
+	// the ones FinalizeLayer will create for whiteout/opaque materialization
+	// (they may not exist yet). Sorted for deterministic metadata.
+	finalizeDirs := map[string]bool{}
+	for _, w := range wh.Whiteouts {
+		for p := filepath.Dir(w); p != "."; p = filepath.Dir(p) {
+			finalizeDirs[p] = true
+		}
+	}
+	for _, o := range wh.Opaques {
+		for p := o; p != "."; p = filepath.Dir(p) {
+			finalizeDirs[p] = true
+		}
+	}
+	for p := range implicit {
+		if declared[p] {
+			continue
+		}
+		if fi, err := root.Lstat(p); err == nil && fi.IsDir() {
+			wh.ImplicitDirs = append(wh.ImplicitDirs, p)
+		} else if finalizeDirs[p] {
+			wh.ImplicitDirs = append(wh.ImplicitDirs, p)
+		}
+	}
+	sort.Strings(wh.ImplicitDirs)
 
 	return wh, nil
 }

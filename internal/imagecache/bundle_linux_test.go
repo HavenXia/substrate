@@ -168,6 +168,47 @@ func TestSetupBundleRootfs_ZeroLayers(t *testing.T) {
 	}
 }
 
+// Implicit-parent metadata repair through a real overlay: the base declares
+// a 0700 dir, the top layer created it implicitly (0755 in its tree), and
+// after compose the merged view must show 0700 — copied up into the
+// bundle's upper, with the shared layer trees untouched. Needs root.
+func TestSetupBundleRootfs_ImplicitDirMetadataRepair(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root (mount/unmount)")
+	}
+	base := t.TempDir()
+	writeLayer(t, base, map[string]string{"secret/keep.txt": "k"}, nil)
+	if err := os.Chmod(filepath.Join(base, layerFSDirName, "secret"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	top := t.TempDir()
+	writeLayer(t, top, map[string]string{"secret/new.txt": "n"}, &whiteoutSet{ImplicitDirs: []string{"secret"}})
+
+	bundle := t.TempDir()
+	if err := WriteSpec(bundle, &OverlaySpec{Layers: []string{base, top}}); err != nil {
+		t.Fatalf("WriteSpec: %v", err)
+	}
+	if err := SetupBundleRootfs(bundle); err != nil {
+		t.Fatalf("SetupBundleRootfs: %v", err)
+	}
+	t.Cleanup(func() { _ = UnmountAllUnder(bundle) })
+
+	fi, err := os.Lstat(filepath.Join(bundle, "rootfs", "secret"))
+	if err != nil {
+		t.Fatalf("stat merged dir: %v", err)
+	}
+	if fi.Mode().Perm() != 0o700 {
+		t.Errorf("merged secret mode = %v, want 0700 from the declaring base layer", fi.Mode().Perm())
+	}
+	// The repair must land in the bundle upper, not the shared pool.
+	if fi, err := os.Lstat(filepath.Join(top, layerFSDirName, "secret")); err != nil || fi.Mode().Perm() != 0o755 {
+		t.Errorf("shared top layer tree was modified: %v %v", fi, err)
+	}
+	if _, err := os.Lstat(filepath.Join(bundle, "upper", "secret")); err != nil {
+		t.Errorf("repair did not copy up into the bundle upper: %v", err)
+	}
+}
+
 // Full overlay mount + UnmountAllUnder round trip; needs CAP_SYS_ADMIN.
 func TestSetupBundleRootfs_MountAndUnmount(t *testing.T) {
 	if os.Geteuid() != 0 {

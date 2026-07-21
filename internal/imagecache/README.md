@@ -125,6 +125,19 @@ staging the virtio-fs lower (micro-VM):
    ships ≥ 6.6 (Stable: COS 121 LTS).
 3. **ExtraDirs** are created through the mount (landing in the upper), again
    under `os.Root` confinement.
+4. **Implicit-parent metadata repair.** A layer tar routinely omits entries
+   for parent directories that exist only in lower layers; unpack fabricates
+   them (root:root 0755) and records them as `implicitDirs` in the layer
+   metadata. Because overlayfs takes a merged directory's attributes from
+   the **top-most** layer containing it, such a fabricated dir would shadow
+   the real metadata a lower layer declared (`/tmp` losing its 1777 sticky
+   bit, `/root` opening from 0700 to 0755). At compose time the consumer
+   resolves each shadowed dir's true mode/ownership from the top-most
+   *non-implicit* layer in this image's chain and applies it through the
+   mount — the copy-up lands in the actor's private upper; the shared pool
+   is never modified. Residual gaps: directory mtimes and xattrs are not
+   repaired, and a dir implicit in *every* layer of the chain keeps the
+   fabricated attrs.
 
 A bundle without a spec file is left untouched (compatibility with bundles
 prepared by a pre-imagecache atelet). A zero-layer spec composes an empty
