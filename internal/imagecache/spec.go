@@ -85,9 +85,10 @@ func ReadSpec(bundlePath string) (*OverlaySpec, error) {
 // order), each pointing at the layer's fs/ tree.
 //
 // An image may legitimately list the same layer at several positions
-// (identical build steps produce identical diffids; SWE-bench images do
-// this). The pool stores that layer once, and overlayfs rejects a repeated
-// lower directory (its overlapping-layers check fails the mount with ELOOP).
+// (repeated identical build steps produce identical diffids; real images
+// in the wild do this). The pool stores that layer once, and overlayfs
+// rejects a repeated lower directory (its overlapping-layers check fails
+// the mount with ELOOP).
 // For identical content only the topmost occurrence can affect the merged
 // view, so keep the first one seen walking top-first and drop the rest.
 //

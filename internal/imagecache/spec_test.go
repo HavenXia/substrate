@@ -76,8 +76,8 @@ func TestOverlayLowerDirs(t *testing.T) {
 		}
 	})
 
-	// Images can list the same layer at several positions (identical build
-	// steps → identical diffids; SWE-bench images do). overlayfs rejects a
+	// Images can list the same layer at several positions (repeated
+	// identical build steps produce identical diffids). overlayfs rejects a
 	// repeated lowerdir with ELOOP, so duplicates must collapse to the
 	// topmost occurrence. Regression test for the "too many levels of
 	// symbolic links" mount failure.
