@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"golang.org/x/sys/unix"
 )
@@ -75,15 +76,81 @@ func SetupBundleRootfs(bundlePath string) error {
 		return createExtraDirs(rootfs, spec.ExtraDirs)
 	}
 
-	opts, err := overlayMountOptions(spec.Layers, upper, work)
-	if err != nil {
-		return err
-	}
-	if err := unix.Mount("overlay", rootfs, "overlay", 0, opts); err != nil {
-		return fmt.Errorf("while mounting overlay rootfs at %q (%s): %w", rootfs, opts, err)
+	if err := mountOverlay(rootfs, overlayLowerDirs(spec.Layers), upper, work); err != nil {
+		return fmt.Errorf("while mounting overlay rootfs at %q: %w", rootfs, err)
 	}
 
 	return createExtraDirs(rootfs, spec.ExtraDirs)
+}
+
+// mountOverlay attaches an overlay of lowers (top-most first) with the given
+// upper/work dirs at mountpoint, using the new mount API rather than
+// mount(2): appending lowerdirs one fsconfig(2) call at a time sidesteps
+// mount(2)'s single-page option-string cap, which digest-derived layer paths
+// (~114 bytes each) would hit at roughly 34 layers.
+//
+// Minimum supported kernel: Linux 6.5, where overlayfs gained the
+// incremental "lowerdir+" option. Every current GKE channel is at or above
+// it (Stable runs COS 121 LTS on kernel 6.6; Regular and Rapid run COS
+// 125/129 on 6.12).
+func mountOverlay(mountpoint string, lowers []string, upper, work string) error {
+	fsfd, err := unix.Fsopen("overlay", unix.FSOPEN_CLOEXEC)
+	if err != nil {
+		return fmt.Errorf("while opening overlay fs context: %w", err)
+	}
+	defer unix.Close(fsfd)
+
+	set := func(key, val string) error {
+		if err := unix.FsconfigSetString(fsfd, key, val); err != nil {
+			return fmt.Errorf("while setting overlay %s=%q: %w%s", key, val, err, fsContextLog(fsfd))
+		}
+		return nil
+	}
+	for _, lower := range lowers {
+		if err := set("lowerdir+", lower); err != nil {
+			return err
+		}
+	}
+	if err := set("upperdir", upper); err != nil {
+		return err
+	}
+	if err := set("workdir", work); err != nil {
+		return err
+	}
+
+	if err := unix.FsconfigCreate(fsfd); err != nil {
+		return fmt.Errorf("while creating overlay superblock: %w%s", err, fsContextLog(fsfd))
+	}
+	mfd, err := unix.Fsmount(fsfd, unix.FSMOUNT_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("while creating overlay mount object: %w%s", err, fsContextLog(fsfd))
+	}
+	defer unix.Close(mfd)
+	if err := unix.MoveMount(mfd, "", unix.AT_FDCWD, mountpoint, unix.MOVE_MOUNT_F_EMPTY_PATH); err != nil {
+		return fmt.Errorf("while attaching overlay at %q: %w", mountpoint, err)
+	}
+	return nil
+}
+
+// fsContextLog drains the human-readable message log the kernel queues on an
+// fs context fd (one "e/w/i "-prefixed message per read, ENODATA when empty)
+// and renders it for appending to an error. mount(2) had no equivalent — a
+// failed overlay mount was a bare errno; here the kernel says which option
+// it rejected and why.
+func fsContextLog(fsfd int) string {
+	var msgs []string
+	buf := make([]byte, 1024)
+	for range 8 {
+		n, err := unix.Read(fsfd, buf)
+		if err != nil || n <= 0 {
+			break
+		}
+		msgs = append(msgs, strings.TrimSpace(string(buf[:n])))
+	}
+	if len(msgs) == 0 {
+		return ""
+	}
+	return " (kernel: " + strings.Join(msgs, "; ") + ")"
 }
 
 // FinalizeLayer materializes the whiteout state recorded at unpack time:

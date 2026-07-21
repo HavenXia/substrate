@@ -18,6 +18,7 @@ package imagecache
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -206,5 +207,50 @@ func TestSetupBundleRootfs_MountAndUnmount(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(bundle, "rootfs", "from-layer.txt")); err == nil {
 		t.Errorf("rootfs still shows layer content after unmount")
+	}
+}
+
+// Regression test for the mount(2) single-page option-string cap: a lowerdir
+// chain whose joined paths exceed one page (~34 digest-derived layers) used
+// to fail with a bare EINVAL. The fsconfig lowerdir+ path has no aggregate
+// limit. Needs CAP_SYS_ADMIN.
+func TestSetupBundleRootfs_ManyLayers(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root (mount/unmount)")
+	}
+	// Digest-length dir names so each path matches production length (~114
+	// bytes); 64 of them comfortably exceed the page that motivated this.
+	pool := filepath.Join(t.TempDir(), "sha256")
+	const n = 64
+	layers := make([]string, n)
+	joined := 0
+	for i := range layers {
+		layers[i] = filepath.Join(pool, fmt.Sprintf("%064d", i))
+		writeLayer(t, layers[i], map[string]string{fmt.Sprintf("from-layer-%02d.txt", i): "x"}, nil)
+		joined += len(layers[i]) + len("/fs") + 1
+	}
+	if pageSize := os.Getpagesize(); joined <= pageSize {
+		t.Fatalf("test layers join to %d bytes, not exceeding the %d-byte page this test guards against", joined, pageSize)
+	}
+
+	bundle := t.TempDir()
+	if err := WriteSpec(bundle, &OverlaySpec{Layers: layers}); err != nil {
+		t.Fatalf("WriteSpec: %v", err)
+	}
+	if err := SetupBundleRootfs(bundle); err != nil {
+		t.Fatalf("SetupBundleRootfs with %d layers: %v", n, err)
+	}
+	t.Cleanup(func() { _ = UnmountAllUnder(bundle) })
+
+	// Bottom-most and top-most layers are both visible in the merged view.
+	for _, i := range []int{0, n - 1} {
+		p := filepath.Join(bundle, "rootfs", fmt.Sprintf("from-layer-%02d.txt", i))
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("layer %d content missing from merged rootfs: %v", i, err)
+		}
+	}
+
+	if err := UnmountAllUnder(bundle); err != nil {
+		t.Fatalf("UnmountAllUnder: %v", err)
 	}
 }

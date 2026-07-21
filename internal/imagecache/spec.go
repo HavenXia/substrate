@@ -80,37 +80,31 @@ func ReadSpec(bundlePath string) (*OverlaySpec, error) {
 	return &spec, nil
 }
 
-// overlayMountOptions builds the overlayfs option string: lowerdir is
-// top-most layer first (the reverse of the spec's bottom-first order), each
-// entry pointing at the layer's fs/ tree.
-func overlayMountOptions(layers []string, upper, work string) (string, error) {
+// overlayLowerDirs returns the overlayfs lowerdir paths for the spec's
+// layers: top-most layer first (the reverse of the spec's bottom-first
+// order), each pointing at the layer's fs/ tree.
+//
+// An image may legitimately list the same layer at several positions
+// (identical build steps produce identical diffids; SWE-bench images do
+// this). The pool stores that layer once, and overlayfs rejects a repeated
+// lower directory (its overlapping-layers check fails the mount with ELOOP).
+// For identical content only the topmost occurrence can affect the merged
+// view, so keep the first one seen walking top-first and drop the rest.
+//
+// Each path is handed to the kernel in its own fsconfig(2) "lowerdir+" call,
+// so no separator escaping or aggregate option-string length cap applies.
+func overlayLowerDirs(layers []string) []string {
 	lowers := make([]string, 0, len(layers))
 	seen := make(map[string]bool, len(layers))
 	for _, layer := range slices.Backward(layers) {
 		p := filepath.Join(layer, layerFSDirName)
-		// An image may legitimately list the same layer at several positions
-		// (identical build steps produce identical diffids; SWE-bench images
-		// do this). The pool stores that layer once, and overlayfs rejects a
-		// repeated lower directory (its overlapping-layers check fails the
-		// mount with ELOOP). For identical content only the topmost
-		// occurrence can affect the merged view, so keep the first one seen
-		// walking top-first and drop the rest.
 		if seen[p] {
 			continue
 		}
 		seen[p] = true
-		// ':' separates lowerdirs and ',' separates mount options; cache paths
-		// are digest-derived so this never fires, but refuse rather than
-		// assemble a corrupt option string.
-		if strings.ContainsAny(p, ":,") {
-			return "", fmt.Errorf("layer path %q contains overlay option separators", p)
-		}
 		lowers = append(lowers, p)
 	}
-	if strings.ContainsAny(upper, ":,") || strings.ContainsAny(work, ":,") {
-		return "", fmt.Errorf("bundle path %q contains overlay option separators", upper)
-	}
-	return "lowerdir=" + strings.Join(lowers, ":") + ",upperdir=" + upper + ",workdir=" + work, nil
+	return lowers
 }
 
 // createExtraDirs creates the spec's ExtraDirs inside the (mounted) rootfs.

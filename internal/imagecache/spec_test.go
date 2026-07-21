@@ -67,14 +67,11 @@ func TestReadSpec_UnknownVersion(t *testing.T) {
 	}
 }
 
-func TestOverlayMountOptions(t *testing.T) {
+func TestOverlayLowerDirs(t *testing.T) {
 	t.Run("reverses to top-first", func(t *testing.T) {
-		got, err := overlayMountOptions([]string{"/c/base", "/c/top"}, "/b/upper", "/b/work")
-		if err != nil {
-			t.Fatalf("overlayMountOptions: %v", err)
-		}
-		want := "lowerdir=/c/top/fs:/c/base/fs,upperdir=/b/upper,workdir=/b/work"
-		if got != want {
+		got := overlayLowerDirs([]string{"/c/base", "/c/top"})
+		want := []string{"/c/top/fs", "/c/base/fs"}
+		if !slices.Equal(got, want) {
 			t.Errorf("got %q, want %q", got, want)
 		}
 	})
@@ -85,19 +82,10 @@ func TestOverlayMountOptions(t *testing.T) {
 	// topmost occurrence. Regression test for the "too many levels of
 	// symbolic links" mount failure.
 	t.Run("deduplicates repeated layers keeping topmost", func(t *testing.T) {
-		got, err := overlayMountOptions([]string{"/c/base", "/c/dup", "/c/dup", "/c/top"}, "/b/upper", "/b/work")
-		if err != nil {
-			t.Fatalf("overlayMountOptions: %v", err)
-		}
-		want := "lowerdir=/c/top/fs:/c/dup/fs:/c/base/fs,upperdir=/b/upper,workdir=/b/work"
-		if got != want {
+		got := overlayLowerDirs([]string{"/c/base", "/c/dup", "/c/dup", "/c/top"})
+		want := []string{"/c/top/fs", "/c/dup/fs", "/c/base/fs"}
+		if !slices.Equal(got, want) {
 			t.Errorf("got %q, want %q", got, want)
-		}
-	})
-
-	t.Run("refuses option separators in paths", func(t *testing.T) {
-		if _, err := overlayMountOptions([]string{"/c/evil:layer"}, "/b/upper", "/b/work"); err == nil {
-			t.Errorf("expected error for ':' in layer path")
 		}
 	})
 }

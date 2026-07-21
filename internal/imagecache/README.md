@@ -118,6 +118,11 @@ staging the virtio-fs lower (micro-VM):
    legitimately list the same diffID twice — are collapsed to the topmost
    occurrence, which overlayfs otherwise rejects with `ELOOP`), `upperdir` /
    `workdir` are the bundle-local dirs, holding this actor's private writes.
+   The mount uses the new mount API (`fsopen` + one `fsconfig` `lowerdir+`
+   append per layer) rather than `mount(2)`, whose single-page option-string
+   cap the digest-derived layer paths would hit at ~34 layers. **Minimum
+   supported kernel: Linux 6.5** (`lowerdir+`); every current GKE channel
+   ships ≥ 6.6 (Stable: COS 121 LTS).
 3. **ExtraDirs** are created through the mount (landing in the upper), again
    under `os.Root` confinement.
 
