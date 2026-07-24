@@ -16,10 +16,13 @@ package controlapi
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/agent-substrate/substrate/cmd/ateapi/internal/scheduling"
+	"github.com/agent-substrate/substrate/cmd/ateapi/internal/store"
 	"github.com/agent-substrate/substrate/cmd/ateapi/internal/store/storetest"
 	"github.com/agent-substrate/substrate/cmd/ateapi/internal/workercache"
 	atev1alpha1 "github.com/agent-substrate/substrate/pkg/api/v1alpha1"
@@ -260,6 +263,137 @@ func TestAssignWorkerStep_RetryAfterConflictPicksFreshWorker(t *testing.T) {
 	}
 	if got := storedActor.GetAteomPodName(); got != "fallback-pod" {
 		t.Errorf("stored actor AteomPodName = %q, want %q", got, "fallback-pod")
+	}
+}
+
+// conflictInjectingStore wraps a store and runs inject exactly once,
+// immediately before the first UpdateActor, simulating a concurrent writer
+// racing the step's read-modify-write window.
+type conflictInjectingStore struct {
+	store.Interface
+	once   sync.Once
+	inject func()
+}
+
+func (c *conflictInjectingStore) UpdateActor(ctx context.Context, actor *ateapipb.Actor, expectedVersion int64) (*ateapipb.Actor, error) {
+	c.once.Do(c.inject)
+	return c.Interface.UpdateActor(ctx, actor, expectedVersion)
+}
+
+// seedAssignFixture stores one free gvisor worker and a SUSPENDED actor and
+// returns the actor plus a started worker cache.
+func seedAssignFixture(t *testing.T, ctx context.Context, persistence store.Interface) (*ateapipb.Actor, *workercache.Cache) {
+	t.Helper()
+	if err := persistence.CreateWorker(ctx, &ateapipb.Worker{
+		WorkerNamespace: "worker-ns",
+		WorkerPool:      "pool",
+		WorkerPod:       "pod-1",
+		SandboxClass:    "gvisor",
+	}); err != nil {
+		t.Fatalf("CreateWorker: %v", err)
+	}
+	actor, err := persistence.CreateActor(ctx, &ateapipb.Actor{
+		Metadata: &ateapipb.ResourceMetadata{Atespace: "team-a", Name: "id1"},
+		Status:   ateapipb.Actor_STATUS_SUSPENDED,
+	})
+	if err != nil {
+		t.Fatalf("CreateActor: %v", err)
+	}
+	cacheCtx, cancel := context.WithCancel(ctx)
+	t.Cleanup(cancel)
+	wc := workercache.New(persistence, time.Minute)
+	if err := wc.Start(cacheCtx); err != nil {
+		t.Fatalf("workercache.Start: %v", err)
+	}
+	return actor, wc
+}
+
+// TestAssignWorkerStep_ConflictRefreshesActor verifies the actor write's
+// conflict handling within a single Execute: a concurrent spec write leaves
+// ErrPersistenceRetry with state.Actor refreshed.
+func TestAssignWorkerStep_ConflictRefreshesActor(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		// mutate is the racing concurrent write applied to the fresh actor.
+		mutate func(fresh *ateapipb.Actor)
+		// wantRetry means Execute surfaces ErrPersistenceRetry with
+		// state.Actor refreshed to the injected write; otherwise Aborted.
+		wantRetry bool
+		// wantStoredStatus is the persisted status after Execute.
+		wantStoredStatus ateapipb.Actor_Status
+	}{
+		{
+			name: "another writer refreshes state.Actor - can recover",
+			mutate: func(fresh *ateapipb.Actor) {
+				fresh.WorkerSelector = &ateapipb.Selector{MatchLabels: map[string]string{"team": "blue"}}
+			},
+			wantRetry:        true,
+			wantStoredStatus: ateapipb.Actor_STATUS_SUSPENDED,
+		},
+		{
+			name: "another writer crash the Actor",
+			mutate: func(fresh *ateapipb.Actor) {
+				fresh.Status = ateapipb.Actor_STATUS_CRASHED
+			},
+			wantRetry:        false,
+			wantStoredStatus: ateapipb.Actor_STATUS_CRASHED,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			persistence := newTestPersistence(t)
+			actor, wc := seedAssignFixture(t, ctx, persistence)
+
+			var injected *ateapipb.Actor
+			st := &conflictInjectingStore{Interface: persistence, inject: func() {
+				fresh, err := persistence.GetActor(ctx, "team-a", "id1")
+				if err != nil {
+					t.Errorf("inject GetActor: %v", err)
+					return
+				}
+				tc.mutate(fresh)
+				injected, err = persistence.UpdateActor(ctx, fresh, fresh.GetMetadata().GetVersion())
+				if err != nil {
+					t.Errorf("inject UpdateActor: %v", err)
+				}
+			}}
+
+			step := &AssignWorkerStep{store: st, workerCache: wc, scheduler: scheduling.New(wc)}
+			state := &ResumeState{
+				Actor: actor,
+				ActorTemplate: &atev1alpha1.ActorTemplate{
+					Spec: atev1alpha1.ActorTemplateSpec{SandboxClass: atev1alpha1.SandboxClassGvisor},
+				},
+			}
+			err := step.Execute(ctx, &ResumeInput{ActorName: "id1", Atespace: "team-a"}, state)
+
+			if tc.wantRetry {
+				if !errors.Is(err, store.ErrPersistenceRetry) {
+					t.Fatalf("Execute: %v, want ErrPersistenceRetry", err)
+				}
+				if got := state.Actor.GetMetadata().GetVersion(); got != injected.GetMetadata().GetVersion() {
+					t.Errorf("state.Actor version = %d, want %d (refreshed for the retry)", got, injected.GetMetadata().GetVersion())
+				}
+				if !proto.Equal(state.Actor.GetWorkerSelector(), injected.GetWorkerSelector()) {
+					t.Errorf("state.Actor WorkerSelector = %v, want %v (concurrent write must survive)", state.Actor.GetWorkerSelector(), injected.GetWorkerSelector())
+				}
+			} else {
+				if got := status.Code(err); got != codes.Aborted {
+					t.Fatalf("status.Code(err) = %v, want %v (err: %v)", got, codes.Aborted, err)
+				}
+			}
+
+			stored, err := persistence.GetActor(ctx, "team-a", "id1")
+			if err != nil {
+				t.Fatalf("GetActor: %v", err)
+			}
+			if stored.GetStatus() != tc.wantStoredStatus {
+				t.Errorf("stored status = %v, want %v", stored.GetStatus(), tc.wantStoredStatus)
+			}
+		})
 	}
 }
 

@@ -222,7 +222,23 @@ func (s *AssignWorkerStep) Execute(ctx context.Context, input *ResumeInput, stat
 
 	updatedActor, err := s.store.UpdateActor(ctx, state.Actor, state.Actor.GetMetadata().GetVersion())
 	if err != nil {
-		return err
+		if !errors.Is(err, store.ErrPersistenceRetry) {
+			return err
+		}
+		// refresh the version of actor to avoid always failure in rest retries.
+		fresh, gerr := s.store.GetActor(ctx, input.Atespace, input.ActorName)
+		if gerr != nil {
+			slog.WarnContext(ctx, "Failed to refresh actor after assignment conflict", slog.Any("err", gerr))
+			return err
+		}
+		switch fresh.GetStatus() {
+		case ateapipb.Actor_STATUS_SUSPENDED, ateapipb.Actor_STATUS_PAUSED:
+			slog.InfoContext(ctx, "Retrying assignment due to actor version conflict", slog.String("actor", input.Atespace+"/"+input.ActorName))
+			state.Actor = fresh
+			return err
+		default:
+			return status.Errorf(codes.Aborted, "actor %s is %s and can no longer be resumed", input.ActorName, fresh.GetStatus())
+		}
 	}
 	state.Actor = updatedActor
 	state.Worker = assignedWorker
