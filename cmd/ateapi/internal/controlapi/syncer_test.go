@@ -620,7 +620,7 @@ func TestReleaseActorOnDeadWorker_StatusTransitions(t *testing.T) {
 			if _, err := persistence.CreateActor(ctx, &ateapipb.Actor{
 				Metadata: &ateapipb.ResourceMetadata{Name: actorID, Atespace: atespace}, ActorTemplateNamespace: ns, ActorTemplateName: "tmpl",
 				Status:            tc.start,
-				AteomPodNamespace: ns, AteomPodName: pod, AteomPodIp: ip,
+				AteomPodNamespace: ns, AteomPodName: pod, AteomPodIp: ip, AteomPodUid: "uid",
 			}); err != nil {
 				t.Fatalf("create actor: %v", err)
 			}
@@ -646,6 +646,9 @@ func TestReleaseActorOnDeadWorker_StatusTransitions(t *testing.T) {
 			}
 			if got.GetStatus() != tc.want {
 				t.Errorf("actor status = %v, want %v", got.GetStatus(), tc.want)
+			}
+			if tc.want == ateapipb.Actor_STATUS_CRASHED && got.GetAteomPodUid() != "" {
+				t.Errorf("crashed actor AteomPodUid = %q, want cleared", got.GetAteomPodUid())
 			}
 		})
 	}

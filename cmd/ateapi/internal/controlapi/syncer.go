@@ -309,6 +309,7 @@ func (s *WorkerPoolSyncer) releaseActorOnDeadWorker(ctx context.Context, namespa
 	actor.AteomPodNamespace = ""
 	actor.AteomPodName = ""
 	actor.AteomPodIp = ""
+	actor.AteomPodUid = ""
 	actor.InProgressSnapshot = ""
 	actor.WorkerPoolName = ""
 
