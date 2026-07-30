@@ -86,6 +86,63 @@ func TestWriteFileAtomic(t *testing.T) {
 	})
 }
 
+func TestCopyFile(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	want := []byte("checkpoint pages")
+	if err := os.WriteFile(src, want, 0o600); err != nil {
+		t.Fatalf("seeding src: %v", err)
+	}
+
+	dst := filepath.Join(dir, "dst")
+	n, err := copyFile(src, dst)
+	if err != nil {
+		t.Fatalf("copyFile: %v", err)
+	}
+	if n != int64(len(want)) {
+		t.Errorf("copied %d bytes, want %d", n, len(want))
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("reading dst: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("dst content = %q, want %q", got, want)
+	}
+
+	if _, err := copyFile(dir, filepath.Join(dir, "dst2")); err == nil {
+		t.Error("copyFile(directory, ...) succeeded, want error")
+	}
+}
+
+type failingCloseFile struct{ *os.File }
+
+func (f failingCloseFile) Close() error {
+	_ = f.File.Close()
+	return errors.New("deferred flush failed")
+}
+
+func TestCopyFile_CloseError(t *testing.T) {
+	orig := createDestFile
+	createDestFile = func(name string) (io.WriteCloser, error) {
+		f, err := os.Create(name)
+		if err != nil {
+			return nil, err
+		}
+		return failingCloseFile{f}, nil
+	}
+	t.Cleanup(func() { createDestFile = orig })
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	if err := os.WriteFile(src, []byte("checkpoint pages"), 0o600); err != nil {
+		t.Fatalf("seeding src: %v", err)
+	}
+	if _, err := copyFile(src, filepath.Join(dir, "dst")); err == nil {
+		t.Error("copyFile with failing destination Close = nil, want error")
+	}
+}
+
 // validRunRequest, validCheckpointRequest, and validRestoreRequest build
 // requests whose every field passes validation; the per-request tests below
 // break one field per case.
