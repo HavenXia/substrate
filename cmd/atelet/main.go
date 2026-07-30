@@ -644,6 +644,8 @@ func (s *AteomHerder) copyLocalCheckpoint(ctx context.Context, snapshotPrefix st
 	return nil
 }
 
+var createDestFile = func(name string) (io.WriteCloser, error) { return os.Create(name) }
+
 func copyFile(src, dst string) (int64, error) {
 	sourceFileStat, err := os.Stat(src)
 	if err != nil {
@@ -660,7 +662,7 @@ func copyFile(src, dst string) (int64, error) {
 	}
 	defer source.Close()
 
-	destination, err := os.Create(dst)
+	destination, err := createDestFile(dst)
 	if err != nil {
 		return 0, err
 	}
