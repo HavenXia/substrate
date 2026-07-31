@@ -261,3 +261,31 @@ func TestCreateActor_RejectsSnapshotWithExternalVolumes(t *testing.T) {
 		t.Fatalf("CreateActor status = %v, want FailedPrecondition", status.Code(err))
 	}
 }
+
+func TestCreateActor_AbortsWhileAtespaceLocked(t *testing.T) {
+	ns := namespaceForTest("ns-create-atespace-lock")
+	tc := setupTest(t, ns)
+	defer tc.cleanup()
+	createTemplate(t, tc, ns)
+
+	lock, err := tc.persistence.AcquireLock(context.Background(), "lock:atespace:"+testAtespace)
+	if err != nil {
+		t.Fatalf("AcquireLock: %v", err)
+	}
+
+	req := &ateapipb.CreateActorRequest{
+		Actor: &ateapipb.Actor{
+			Metadata:               &ateapipb.ResourceMetadata{Atespace: testAtespace, Name: testActorID},
+			ActorTemplateNamespace: ns,
+			ActorTemplateName:      "tmpl1",
+		},
+	}
+	if _, err := tc.service.CreateActor(context.Background(), req); status.Code(err) != codes.Aborted {
+		t.Fatalf("CreateActor while Atespace locked: got %v, want %s", err, codes.Aborted)
+	}
+
+	lock.Close()
+	if _, err := tc.service.CreateActor(context.Background(), req); err != nil {
+		t.Fatalf("CreateActor after lock release: %v", err)
+	}
+}

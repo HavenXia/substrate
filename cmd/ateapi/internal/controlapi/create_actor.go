@@ -87,6 +87,17 @@ func (s *Service) CreateActor(ctx context.Context, req *ateapipb.CreateActorRequ
 	atespace := in.GetMetadata().GetAtespace()
 	name := in.GetMetadata().GetName()
 
+	// Acquire an Atespace lock across the actor creation so concurrent DeleteAtespace cannot orphan the new actor.
+	atespaceLock, err := s.persistence.AcquireLock(ctx, "lock:atespace:"+atespace)
+	if errors.Is(err, store.ErrLockConflict) {
+		return nil, status.Error(codes.Aborted, "another operation is using this Atespace")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("while locking Atespace: %w", err)
+	}
+	defer atespaceLock.Close()
+	ctx = atespaceLock.Context()
+
 	// The atespace must already exist.
 	exists, err := s.persistence.AtespaceExists(ctx, atespace)
 	if err != nil {
