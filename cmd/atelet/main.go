@@ -81,7 +81,7 @@ var (
 	logLevelFlag = pflag.String("log-level", "info", "Minimum log level: debug, info, warn, or error.")
 
 	drainDelay   = pflag.Duration("drain-delay", 0, "How long to keep accepting new RPCs after SIGTERM before starting the gRPC drain.")
-	drainTimeout = pflag.Duration("drain-timeout", 5*time.Minute, "Deadline for the graceful gRPC drain on shutdown. In-flight RPCs still running past it are forcefully cancelled.")
+	drainTimeout = pflag.Duration("drain-timeout", 60*time.Minute, "Deadline for the graceful gRPC drain on shutdown. In-flight RPCs still running past it are forcefully cancelled. Sized to the worker pod's 60m termination grace: a Checkpoint/Restore still in flight when atelet is terminated must not be cancelled before the worker's own grace expires.")
 )
 
 func main() {
@@ -248,12 +248,26 @@ func drainOnShutdown(ctx context.Context, srv *grpc.Server, readiness *serverboo
 			srv.GracefulStop()
 			close(drainComplete)
 		}()
-		select {
-		case <-drainComplete:
-			slog.InfoContext(ctx, "Drain completed within deadline")
-		case <-time.After(*drainTimeout):
-			slog.WarnContext(ctx, "Drain deadline exceeded; forcing stop")
-			srv.Stop()
+		// log progress so the pod does not just sit in Terminating silently.
+		start := time.Now()
+		deadline := time.NewTimer(*drainTimeout)
+		defer deadline.Stop()
+		progress := time.NewTicker(time.Minute)
+		defer progress.Stop()
+		for {
+			select {
+			case <-drainComplete:
+				slog.InfoContext(ctx, "Drain completed within deadline")
+				return
+			case <-progress.C:
+				slog.InfoContext(ctx, "Still draining",
+					slog.Duration("elapsed", time.Since(start).Round(time.Second)),
+					slog.Duration("remaining", (*drainTimeout-time.Since(start)).Round(time.Second)))
+			case <-deadline.C:
+				slog.WarnContext(ctx, "Drain deadline exceeded; forcing stop")
+				srv.Stop()
+				return
+			}
 		}
 	}()
 	return done
