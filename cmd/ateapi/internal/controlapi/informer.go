@@ -15,6 +15,7 @@
 package controlapi
 
 import (
+	"os"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -50,11 +51,20 @@ func AteletInformer(kc kubernetes.Interface) (informers.SharedInformerFactory, c
 	return factory, ateletInformer
 }
 
+// stackVersion is the substrate-version of the stack this server belongs to.
+// Empty (the default) means single-stack: no version fencing anywhere.
+var stackVersion = os.Getenv("SUBSTRATE_VERSION")
+
 // WorkerPodInformer creates a SharedInformerFactory and SharedIndexInformer for Worker pods.
 func WorkerPodInformer(kc kubernetes.Interface) (informers.SharedInformerFactory, cache.SharedIndexInformer) {
+	workerPodSelector := "ate.dev/worker-pool"
+	if stackVersion != "" {
+		// Dual-live fencing: only watch this stack's worker pods.
+		workerPodSelector += ",substrate-version=" + stackVersion
+	}
 	factory := informers.NewSharedInformerFactoryWithOptions(kc, 5*time.Minute,
 		informers.WithTweakListOptions(func(options *metav1.ListOptions) {
-			options.LabelSelector = "ate.dev/worker-pool"
+			options.LabelSelector = workerPodSelector
 		}),
 	)
 	workerPodInformer := factory.Core().V1().Pods().Informer()

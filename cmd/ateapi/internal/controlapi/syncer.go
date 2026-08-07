@@ -319,6 +319,12 @@ func (s *WorkerPoolSyncer) enqueueStoredWorkers(ctx context.Context) {
 			return
 		}
 		for _, w := range workers {
+			// Dual-live fencing: never touch another stack's worker records — a
+			// foreign record's pod is invisible to this stack's informer, so an
+			// unfenced sweep would release its actor and delete the record.
+			if stackVersion != "" && w.GetLabels()["substrate-version"] != stackVersion {
+				continue
+			}
 			s.queue.Add(workerKey{namespace: w.GetWorkerNamespace(), pool: w.GetWorkerPool(), name: w.GetWorkerPod()})
 		}
 		if nextToken == "" {
