@@ -126,9 +126,14 @@ Cross-version pairs actually exercised on the wire:
    cert, not the original caller's (bearer tokens do transit). Fine while the
    api does not authorize per-identity.
 7. PodMonitoring dropped from the render; PDB kept shared across both stacks.
-8. Run 2 (genuinely older blue binary + basis patches) not run tonight; the
-   run-1 machinery (distinct ldflags-stamped images) is version-real but
-   code-identical.
+8. The old-blue run (the design's "Run 2") ran the morning after: blue built
+   from `2fe26c16` (+ the basis cherry-picks, branch `poc-blue-old`), seven
+   upstream merges behind green — a real boundary crossing gVisor bump #787,
+   pause-prune #705, tag-CAS #755/#758, Assignment schema churn. ALL PASS,
+   zero interventions, same single cross-stack control call. Old-written GCS
+   and pause snapshots restored on green; green-written records tolerated by
+   the old binary-proto reader (the basis claim, measured). Two #705 compat
+   shims were the whole cost of backporting the basis to the old base.
 
 ## Interaction table (dispatcher decisions, run 1: 912 calls)
 

@@ -1,0 +1,11 @@
+time=2026-08-07T08:32:36.329-07:00 level=INFO msg="dual-live operator started" interval=2s
+time=2026-08-07T08:32:42.937-07:00 level=INFO msg="phase transition" from=Pending to=Installing msg="installing 0.1.0"
+time=2026-08-07T08:33:40.504-07:00 level=INFO msg="phase transition" from=Installing to=Ready msg="installed 0.1.0; door serving (0 actors)"
+time=2026-08-07T08:34:22.070-07:00 level=INFO msg="phase transition" from=Ready to=GreenUp msg="upgrading 0.1.0 -> 0.2.0"
+time=2026-08-07T08:34:40.592-07:00 level=INFO msg="phase transition" from=GreenUp to=CommitPaused msg="green stack up; preflight via door: 6 actors, 8 workers readable"
+time=2026-08-07T08:34:45.469-07:00 level=INFO msg="phase transition" from=CommitPaused to=Flip msg="no paused actors remain"
+time=2026-08-07T08:34:56.877-07:00 level=INFO msg="phase transition" from=Flip to=Migrate msg="door+rules flipped, 2 templates repointed; grace 90s"
+E0807 08:35:01.331876   62139 portforward.go:522] "Unhandled Error" err="an error occurred forwarding 49804 -> 443: error forwarding port 443 to pod d42061ed70661a16172874f5743decf87c9932d3b8b0ce5ff043ed5d10089516, uid : network namespace for sandbox \"d42061ed70661a16172874f5743decf87c9932d3b8b0ce5ff043ed5d10089516\" is closed" logger="UnhandledError"
+time=2026-08-07T08:35:01.332-07:00 level=ERROR msg="phase step failed; will retry" phase=Migrate err="rpc error: code = Unavailable desc = connection error: desc = \"transport: authentication handshake failed: EOF\""
+time=2026-08-07T08:36:31.571-07:00 level=INFO msg="phase transition" from=Migrate to=Teardown msg="no actors left on the old stack"
+time=2026-08-07T08:36:35.199-07:00 level=INFO msg="phase transition" from=Teardown to=Ready msg="upgrade to 0.2.0 complete: 1 killed, 1 committed"

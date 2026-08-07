@@ -1,8 +1,24 @@
-# POC run results (GKE substrate-poc, night of 2026-08-07)
+# POC run results (GKE substrate-poc, 2026-08-07)
 
-Two full end-to-end runs of: fresh install at 0.1.0 → seed 5 actor stories →
+Three full end-to-end runs of: fresh install at 0.1.0 → seed 5 actor stories →
 `kubectl patch substrate` to 0.2.0 → unattended walk to Ready-at-0.2.0.
-Raw artifacts in `results/`.
+Runs 1-2: both stacks same code, different version stamps (the machinery
+test). Run 3 = the design doc's "Run 2": blue genuinely older. Raw artifacts
+in `results/`.
+
+## Run 3 (old blue, real version boundary): ALL PASS, zero interventions
+
+Blue built from upstream `2fe26c16` + the basis cherry-picks (branch
+`poc-blue-old`; two small #705 compat shims were the only backport cost).
+That base is seven merges behind green — the window includes the gVisor
+release bump (#787), pause-snapshot pruning (#705), snapshot-tag CAS changes
+(#755/#758) and Assignment schema churn. All five stories passed identically
+to run 2, including: suspend snapshot written by the OLD api restored by the
+NEW stack with RAM intact (3→5→6), the pause snapshot uploaded by the OLD
+atelet under #791 restored green (3→4), and green-written records read back
+through the old binary-proto store code without complaint. Dispatcher table
+identical in shape to run 2 — again exactly ONE old-side call post-flip
+(SuspendActor, reason assignment-0.1.0). Logs: results/{operator,dispatcher}-run3*.
 
 ## Run 2 (clean, after the run-1 fix): ALL PASS, zero interventions
 
