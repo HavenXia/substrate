@@ -49,6 +49,10 @@ type WorkerPoolReconciler struct {
 	// OTelTracesSamplerArg is the OTEL_TRACES_SAMPLER_ARG propagated to ateom
 	// pods. Ignored unless OTelTracesSampler is set.
 	OTelTracesSamplerArg string
+	// SubstrateVersion, when non-empty, is stamped as the substrate-version
+	// label on rendered Deployments and worker pods (dual-stack fencing).
+	// Empty keeps the single-stack shape.
+	SubstrateVersion string
 }
 
 //+kubebuilder:rbac:groups=ate.dev,resources=workerpools,verbs=get;list;watch;create;update;patch;delete
@@ -110,7 +114,7 @@ func (r *WorkerPoolReconciler) applyDeployment(ctx context.Context, wp *atev1alp
 		MetricExportTimeout:  r.OTelMetricExportTimeout,
 		TracesSampler:        r.OTelTracesSampler,
 		TracesSamplerArg:     r.OTelTracesSamplerArg,
-	})
+	}, r.SubstrateVersion)
 	if err := r.Apply(ctx, depAC, client.FieldOwner(workerPoolFieldOwner), client.ForceOwnership); err != nil {
 		return fmt.Errorf("failed to apply Deployment: %w", err)
 	}

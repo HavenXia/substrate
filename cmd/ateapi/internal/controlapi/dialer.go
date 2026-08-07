@@ -91,13 +91,20 @@ func (d *AteletDialer) DialForWorker(workerPodNamespace, workerPodName string) (
 
 	selectedWorker := matchingPods[0].(*corev1.Pod)
 
-	matchingAtelets, err := d.ateletIndexer.ByIndex(byNode, selectedWorker.Spec.NodeName)
+	return d.DialForNode(selectedWorker.Spec.NodeName)
+}
+
+// DialForNode returns a gRPC connection to the Atelet running on the given node.
+// Used when an actor has no worker assignment but is pinned to a node by a
+// local snapshot.
+func (d *AteletDialer) DialForNode(nodeName string) (*grpc.ClientConn, error) {
+	matchingAtelets, err := d.ateletIndexer.ByIndex(byNode, nodeName)
 	if err != nil {
-		return nil, fmt.Errorf("while finding atelet for worker pod %q on node %q: %w", workerPodKey, selectedWorker.Spec.NodeName, err)
+		return nil, fmt.Errorf("while finding atelet on node %q: %w", nodeName, err)
 	}
 
 	if len(matchingAtelets) != 1 {
-		return nil, fmt.Errorf("found %d atelet pods on node %q, expected 1", len(matchingAtelets), selectedWorker.Spec.NodeName)
+		return nil, fmt.Errorf("found %d atelet pods on node %q, expected 1", len(matchingAtelets), nodeName)
 	}
 
 	selectedAtelet := matchingAtelets[0].(*corev1.Pod)

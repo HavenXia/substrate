@@ -56,8 +56,10 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of ActorTemplate. This field
-              is immutable.
+            description: |-
+              spec defines the desired state of ActorTemplate.
+              POC: spec-immutability CEL dropped so upgrades can repoint workerSelector;
+              mutability to be scoped by #768's field mask later.
             properties:
               containers:
                 description: Containers is the workload definition.
@@ -458,8 +460,6 @@ spec:
             - snapshotsConfig
             type: object
             x-kubernetes-validations:
-            - message: Spec is immutable
-              rule: self == oldSelf
             - message: All volumes defined in spec.volumes must be mounted by at least
                 one container
               rule: '!has(self.volumes) || self.volumes.all(v, has(self.containers)

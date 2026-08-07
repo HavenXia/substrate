@@ -1,0 +1,737 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Shared (version-less, never torn down) objects for the dual-live POC:
+# namespaces, all ServiceAccounts (identity contracts: Workload Identity binds
+# sa/atelet, atunnel pins sa/atenet-router), RBAC, the doors (api ->
+# dispatcher; atenet-router -> version-selected, patched at Flip; dns ->
+# unversioned), valkey, otel config, SandboxConfig, the dispatcher, and the
+# demo namespace with its two ActorTemplates. CRDs + ClusterRole ate-controller
+# arrive via crds.yaml. Derived from manifests/ate-install/*.yaml; rendered by
+# render.sh.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ate-system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ate-demo-dual
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ate-api-server
+  namespace: ate-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ate-client
+  namespace: ate-system
+  labels:
+    apps: ate-client
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ate-controller
+  namespace: ate-system
+  labels:
+    apps: ate-controller
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: atelet
+  namespace: ate-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: atenet-router
+  namespace: ate-system
+  labels:
+    app: atenet-router
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: atenet-dns
+  namespace: ate-system
+  labels:
+    app: dns
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ate-dispatcher
+  namespace: ate-system
+  labels:
+    app: ate-dispatcher
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ate-api-server
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "watch", "list"]
+- apiGroups: ["ate.dev"]
+  resources: ["actortemplates", "workerpools", "sandboxconfigs"]
+  verbs: ["get", "watch", "list"]
+- apiGroups: ["ate.dev"]
+  resources: ["workerpools"]
+  verbs: ["get", "watch", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ate-api-server
+subjects:
+- kind: ServiceAccount
+  name: ate-api-server
+  namespace: ate-system
+roleRef:
+  kind: ClusterRole
+  name: ate-api-server
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: atelet
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "watch", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: atelet
+subjects:
+- kind: ServiceAccount
+  name: atelet
+  namespace: ate-system
+roleRef:
+  kind: ClusterRole
+  name: atelet
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: atenet-router
+rules:
+- apiGroups:
+  - "ate.dev"
+  resources:
+  - actortemplates
+  verbs:
+  - get
+  - watch
+  - list
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: atenet-router
+subjects:
+- kind: ServiceAccount
+  name: atenet-router
+  namespace: ate-system
+roleRef:
+  kind: ClusterRole
+  name: atenet-router
+  apiGroup: rbac.authorization.k8s.io
+---
+# ClusterRole ate-controller comes from manifests/ate-install/generated/role.yaml
+# via crds.yaml; only the binding lives here.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ate-controller
+subjects:
+- kind: ServiceAccount
+  name: ate-controller
+  namespace: ate-system
+roleRef:
+  kind: ClusterRole
+  name: ate-controller
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: atenet-dns
+  namespace: ate-system
+rules:
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: atenet-dns
+  namespace: ate-system
+subjects:
+- kind: ServiceAccount
+  name: atenet-dns
+  namespace: ate-system
+roleRef:
+  kind: Role
+  name: atenet-dns
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: atenet-dns
+  namespace: kube-system
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: atenet-dns
+  namespace: kube-system
+subjects:
+- kind: ServiceAccount
+  name: atenet-dns
+  namespace: ate-system
+roleRef:
+  kind: Role
+  name: atenet-dns
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ate-otel-config
+  namespace: ate-system
+data:
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://opentelemetry-collector.gke-managed-otel.svc.cluster.local:4317
+---
+# The api door. Headless so gRPC clients balance client-side; selects the
+# dispatcher, which forwards to the per-stack backend Services.
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: ate-system
+spec:
+  clusterIP: None
+  selector:
+    app: ate-dispatcher
+  ports:
+  - name: grpc
+    protocol: TCP
+    port: 443
+    targetPort: 443
+---
+# The ingress door. The substrate-version selector term is patched to the new
+# version at Flip.
+apiVersion: v1
+kind: Service
+metadata:
+  name: atenet-router
+  namespace: ate-system
+spec:
+  type: ClusterIP
+  selector:
+    app: atenet-router
+    substrate-version: "${INITIAL_VERSION}"
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+    protocol: TCP
+  - name: https
+    port: 443
+    targetPort: 8443
+    protocol: TCP
+  - name: status
+    port: 4040
+    targetPort: status
+    protocol: TCP
+---
+# The DNS door: unversioned, both stacks' dns pods answer identically.
+apiVersion: v1
+kind: Service
+metadata:
+  name: dns
+  namespace: ate-system
+  labels:
+    app: dns
+spec:
+  selector:
+    app: dns
+  type: ClusterIP
+  ports:
+  - name: dns
+    port: 53
+    protocol: UDP
+  - name: dns-tcp
+    port: 53
+    protocol: TCP
+---
+# Covers both stacks' api pods (selector deliberately version-less).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ate-api-server
+  namespace: ate-system
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: ate-api-server
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: valkey-config
+  namespace: ate-system
+data:
+  valkey.conf: |
+    # Enforce TLS and disable standard port
+    port 0
+    tls-port 6379
+    tls-cluster yes
+    tls-replication yes
+
+    # Load certificates from projected volume
+    tls-cert-file /run/servicedns.podcert.ate.dev/credential-bundle.pem
+    tls-key-file /run/servicedns.podcert.ate.dev/credential-bundle.pem
+    tls-client-cert-file /run/podidentity.podcert.ate.dev/credential-bundle.pem
+    tls-client-key-file /run/podidentity.podcert.ate.dev/credential-bundle.pem
+    tls-ca-cert-file /etc/valkey-ca/ca.crt
+    tls-auth-clients yes
+
+    # Reload every 10 minutes.
+    # The interval should be less than the 30m headroom (notAfter - beginRefreshAt)
+    # set by cmd/podcertcontroller/internal/servicednssigner/servicednssigner.go.
+    tls-auto-reload-interval 600
+
+    # Enable cluster mode
+    cluster-enabled yes
+    cluster-config-file nodes.conf
+    cluster-node-timeout 5000
+    appendonly yes
+    protected-mode no
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey-cluster-service
+  namespace: ate-system
+spec:
+  clusterIP: None
+  selector:
+    app: valkey-cluster
+  ports:
+  - name: valkey
+    port: 6379
+    targetPort: 6379
+  - name: bus
+    port: 16379
+    targetPort: 16379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey-cluster
+  namespace: ate-system
+spec:
+  selector:
+    app: valkey-cluster
+  ports:
+  - name: valkey
+    port: 6379
+    targetPort: 6379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: valkey-cluster
+  namespace: ate-system
+spec:
+  serviceName: valkey-cluster-service
+  replicas: 6
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: valkey-cluster
+  template:
+    metadata:
+      labels:
+        app: valkey-cluster
+    spec:
+      containers:
+      - name: valkey
+        image: valkey/valkey:9.1@sha256:4963247afc4cd33c7d3b2d2816b9f7f8eeebab148d29056c2ca4d7cbc966f2d9
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          POD_DNS="${HOSTNAME}.valkey-cluster-service.ate-system.svc"
+          cp /etc/valkey/valkey.conf /tmp/valkey.conf
+          {
+            echo "cluster-announce-hostname ${POD_DNS}"
+            echo "cluster-announce-tls-port 6379"
+            echo "cluster-announce-bus-port 16379"
+            echo "cluster-preferred-endpoint-type hostname"
+          } >> /tmp/valkey.conf
+          exec valkey-server /tmp/valkey.conf
+        ports:
+        - name: valkey
+          containerPort: 6379
+        - name: bus
+          containerPort: 16379
+        volumeMounts:
+        - name: config
+          mountPath: /etc/valkey
+        - name: servicedns
+          mountPath: /run/servicedns.podcert.ate.dev
+        - name: podidentity
+          mountPath: /run/podidentity.podcert.ate.dev
+        - name: valkey-ca-certs
+          mountPath: /etc/valkey-ca
+          readOnly: true
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: config
+        configMap:
+          name: valkey-config
+      - name: servicedns
+        projected:
+          sources:
+          - podCertificate:
+              signerName: servicedns.podcert.ate.dev/identity
+              keyType: ECDSAP256
+              credentialBundlePath: credential-bundle.pem
+      - name: podidentity
+        projected:
+          sources:
+          - podCertificate:
+              signerName: podidentity.podcert.ate.dev/identity
+              keyType: ECDSAP256
+              credentialBundlePath: credential-bundle.pem
+      - name: valkey-ca-certs
+        projected:
+          sources:
+          - secret:
+              name: valkey-ca-certs
+              items:
+              - key: ca.crt
+                path: ca.crt
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 1Gi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: valkey-cluster-init
+  namespace: ate-system
+spec:
+  template:
+    metadata:
+      labels:
+        app: valkey-cluster-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: init
+        image: valkey/valkey:9.1@sha256:4963247afc4cd33c7d3b2d2816b9f7f8eeebab148d29056c2ca4d7cbc966f2d9
+        volumeMounts:
+        # A client of the cluster, so it uses a podidentity client cert.
+        - name: podidentity
+          mountPath: /run/podidentity.podcert.ate.dev
+        - name: valkey-ca-certs
+          mountPath: /etc/valkey-ca
+          readOnly: true
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "Waiting for all Valkey pods to resolve..."
+          for i in 0 1 2 3 4 5; do
+            until getent hosts valkey-cluster-${i}.valkey-cluster-service.ate-system.svc >/dev/null 2>&1; do
+              echo "Waiting for valkey-cluster-${i} DNS..."
+              sleep 2
+            done
+          done
+
+          echo "All pods resolved. Building stable node list..."
+          VALKEY_NODES=""
+          for i in 0 1 2 3 4 5; do
+            VALKEY_NODES="${VALKEY_NODES} valkey-cluster-${i}.valkey-cluster-service.ate-system.svc:6379"
+          done
+
+          echo "Checking if Valkey cluster is already initialized..."
+          until valkey-cli --tls --cacert /etc/valkey-ca/ca.crt --cert /run/podidentity.podcert.ate.dev/credential-bundle.pem --key /run/podidentity.podcert.ate.dev/credential-bundle.pem -h valkey-cluster-0.valkey-cluster-service.ate-system.svc ping >/dev/null 2>&1; do
+            echo "Waiting for valkey-cluster-0 to respond to ping..."
+            sleep 2
+          done
+
+          INIT_STATUS=$(valkey-cli --tls --cacert /etc/valkey-ca/ca.crt --cert /run/podidentity.podcert.ate.dev/credential-bundle.pem --key /run/podidentity.podcert.ate.dev/credential-bundle.pem -h valkey-cluster-0.valkey-cluster-service.ate-system.svc cluster info 2>/dev/null | grep cluster_state || true)
+
+          if [ -z "${INIT_STATUS}" ] || ! echo "${INIT_STATUS}" | grep -q "cluster_state:ok"; then
+            echo "Initializing Valkey cluster..."
+            valkey-cli --tls \
+              --cacert /etc/valkey-ca/ca.crt \
+              --cert /run/podidentity.podcert.ate.dev/credential-bundle.pem \
+              --key /run/podidentity.podcert.ate.dev/credential-bundle.pem \
+              --cluster create ${VALKEY_NODES} \
+              --cluster-replicas 1 \
+              --cluster-yes
+            echo "Cluster initialization complete!"
+          else
+            echo "Cluster already initialized."
+          fi
+      volumes:
+      - name: podidentity
+        projected:
+          sources:
+          - podCertificate:
+              signerName: podidentity.podcert.ate.dev/identity
+              keyType: ECDSAP256
+              credentialBundlePath: credential-bundle.pem
+      - name: valkey-ca-certs
+        projected:
+          sources:
+          - secret:
+              name: valkey-ca-certs
+              items:
+              - key: ca.crt
+                path: ca.crt
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: sandboxconfig-assets
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups:   ["ate.dev"]
+      apiVersions: ["v1alpha1"]
+      operations:  ["CREATE", "UPDATE"]
+      resources:   ["sandboxconfigs"]
+  validations:
+  - expression: >-
+      object.spec.sandboxClass != 'gvisor' ||
+      (has(object.spec.assets) && size(object.spec.assets) > 0 &&
+       object.spec.assets.all(arch,
+         'gvisor' in object.spec.assets[arch] || 'runsc' in object.spec.assets[arch]))
+    message: "a gvisor SandboxConfig must define a 'gvisor' (release tarball) or legacy 'runsc' asset for every architecture under spec.assets"
+  - expression: >-
+      object.spec.sandboxClass != 'microvm' ||
+      (has(object.spec.assets) && size(object.spec.assets) > 0 &&
+       object.spec.assets.all(arch,
+         ['cloud-hypervisor', 'virtiofsd', 'kata-kernel', 'kata-image', 'kata-config']
+           .all(name, name in object.spec.assets[arch])))
+    message: "a microvm SandboxConfig must define cloud-hypervisor, virtiofsd, kata-kernel, kata-image, and kata-config assets for every architecture under spec.assets"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: sandboxconfig-assets
+spec:
+  policyName: sandboxconfig-assets
+  validationActions: ["Deny"]
+---
+apiVersion: ate.dev/v1alpha1
+kind: SandboxConfig
+metadata:
+  name: gvisor-default
+spec:
+  sandboxClass: gvisor
+  default: true
+  assets:
+    amd64:
+      gvisor:
+        url: "gs://gvisor/releases/release/20260803/x86_64/gvisor.tar.bz2"
+        sha256: "9e7a5fcc2cbd28c9cd4af910a9327abcf07a8efcce242c285b860d79010c2db5"
+    arm64:
+      gvisor:
+        url: "gs://gvisor/releases/release/20260803/aarch64/gvisor.tar.bz2"
+        sha256: "294d54dea2a18bcd2614a4b5072d6f32f0e8938f9e6e71c9e86b843c4a7b707b"
+---
+# Routing rules for the dispatcher; the operator patches mode to "upgrade" at
+# Flip. Unlabeled on purpose: teardown's delete-by-substrate-version must not
+# remove it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ate-dispatcher-rules
+  namespace: ate-system
+data:
+  rules.json: |
+    {"mode":"passthrough"}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ate-dispatcher
+  namespace: ate-system
+  labels:
+    app: ate-dispatcher
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ate-dispatcher
+  template:
+    metadata:
+      labels:
+        app: ate-dispatcher
+    spec:
+      serviceAccountName: ate-dispatcher
+      containers:
+      - name: dispatcher
+        image: ko://github.com/agent-substrate/substrate/demos/dualstack-poc/dispatcher
+        args:
+        - --listen=:443
+        - --cred-bundle=/run/servicedns.podcert.ate.dev/credential-bundle.pem
+        - --backend-ca=/run/servicedns-ca/trust-bundle.pem
+        - --client-cred-bundle=/run/podidentity.podcert.ate.dev/credential-bundle.pem
+        - --old=dns:///ate-api-0-1-0.ate-system.svc:443
+        - --new=dns:///ate-api-0-2-0.ate-system.svc:443
+        - --old-version=0.1.0
+        - --new-version=0.2.0
+        - --rules=/etc/dispatcher/rules.json
+        ports:
+        - name: grpc
+          containerPort: 443
+        readinessProbe:
+          tcpSocket:
+            port: 443
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        volumeMounts:
+        # servicedns: serving cert; the api door selecting this pod gives it
+        # the api.ate-system.svc SAN clients verify.
+        - name: "servicedns"
+          mountPath: "/run/servicedns.podcert.ate.dev"
+        # podidentity: client identity presented to the backend api servers.
+        - name: "podidentity"
+          mountPath: "/run/podidentity.podcert.ate.dev"
+        # Trust bundle used to verify the backends' servicedns serving certs.
+        - name: "servicedns-ca"
+          mountPath: "/run/servicedns-ca"
+        - name: "rules"
+          mountPath: "/etc/dispatcher"
+      volumes:
+      - name: "servicedns"
+        projected:
+          sources:
+          - podCertificate:
+              signerName: servicedns.podcert.ate.dev/identity
+              keyType: ECDSAP256
+              credentialBundlePath: credential-bundle.pem
+      - name: "podidentity"
+        projected:
+          sources:
+          - podCertificate:
+              signerName: podidentity.podcert.ate.dev/identity
+              keyType: ECDSAP256
+              credentialBundlePath: credential-bundle.pem
+      - name: "servicedns-ca"
+        projected:
+          sources:
+          - clusterTrustBundle:
+              signerName: servicedns.podcert.ate.dev/identity
+              labelSelector:
+                matchLabels:
+                  podcert.ate.dev/canarying: live
+              path: trust-bundle.pem
+      - name: "rules"
+        configMap:
+          name: ate-dispatcher-rules
+---
+# The workerSelector's substrate-version term is patched to the new version at
+# Flip (CRD spec-immutability relaxed for the POC).
+apiVersion: ate.dev/v1alpha1
+kind: ActorTemplate
+metadata:
+  name: dualcounter
+  namespace: ate-demo-dual
+spec:
+  pauseImage: "registry.k8s.io/pause:3.10.2@sha256:f548e0e8e3dc1896ca956272154dde3314e8cc4fde0a57577ee9fa1c63f5baf4"
+  containers:
+  - name: actor
+    image: ko://github.com/agent-substrate/substrate/demos/dualstack-poc/actor
+    command:
+    - /ko-app/actor
+    readyz:
+      httpGet:
+        path: /readyz
+        port: 80
+  workerSelector:
+    matchLabels:
+      workload: dualcounter
+      substrate-version: "${INITIAL_VERSION}"
+  snapshotsConfig:
+    onPause: Full
+    onCommit: Full
+    location: gs://${BUCKET_NAME}/ate-demo-dual/
+---
+# Same as dualcounter but the actor ignores drain notifications (story-d).
+apiVersion: ate.dev/v1alpha1
+kind: ActorTemplate
+metadata:
+  name: dualcounter-stubborn
+  namespace: ate-demo-dual
+spec:
+  pauseImage: "registry.k8s.io/pause:3.10.2@sha256:f548e0e8e3dc1896ca956272154dde3314e8cc4fde0a57577ee9fa1c63f5baf4"
+  containers:
+  - name: actor
+    image: ko://github.com/agent-substrate/substrate/demos/dualstack-poc/actor
+    command:
+    - /ko-app/actor
+    args:
+    - --cooperative=false
+    readyz:
+      httpGet:
+        path: /readyz
+        port: 80
+  workerSelector:
+    matchLabels:
+      workload: dualcounter
+      substrate-version: "${INITIAL_VERSION}"
+  snapshotsConfig:
+    onPause: Full
+    onCommit: Full
+    location: gs://${BUCKET_NAME}/ate-demo-dual/stubborn/

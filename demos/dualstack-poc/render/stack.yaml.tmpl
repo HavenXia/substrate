@@ -1,0 +1,720 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Per-stack manifests for the dual-live POC, derived from
+# manifests/ate-install/{ate-api-server,ate-controller,atelet,atenet-router,atenet-dns}.yaml.
+# Transforms: names suffixed -${SFX}, substrate-version label on objects,
+# selectors, and pod templates; SUBSTRATE_VERSION env on ate-api-server and
+# ate-controller; nodeSelector pinning atelet + workers to this stack's nodes.
+# ServiceAccounts, RBAC, doors (api/atenet-router/dns Services), and the PDB
+# live in shared.yaml. Rendered by render.sh (sed + ko resolve per version).
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ate-api-server-${SFX}
+  namespace: ate-system
+  labels:
+    substrate-version: "${VERSION}"
+spec:
+  replicas: 2
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: ate-api-server
+      substrate-version: "${VERSION}"
+  template:
+    metadata:
+      labels:
+        app: ate-api-server
+        substrate-version: "${VERSION}"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    spec:
+      serviceAccountName: ate-api-server
+      # Budget for the full shutdown sequence: --drain-delay + --drain-timeout.
+      terminationGracePeriodSeconds: 40
+      containers:
+      - name: ate-api-server
+        image: ko://github.com/agent-substrate/substrate/cmd/ateapi
+        args:
+          - "--grpc-listen-addr=0.0.0.0:443"
+          - "--grpc-server-cred-bundle=/run/servicedns.podcert.ate.dev/credential-bundle.pem"
+          - --redis-cluster-address=@env
+          - --redis-ca-certs=/etc/valkey-ca/ca.crt
+          - --redis-use-iam-auth=@env
+          - --redis-tls-server-name=@env
+          - --redis-client-cert=@env
+          - --client-jwt-issuer=@env
+          - --client-jwt-audience=api.ate-system.svc
+          - --actor-id-jwt-pool=/run/actor-id-jwt-pool/pool.json
+          - --actor-id-ca-pool=/run/actor-id-ca-pool/pool.json
+          - --atelet-client-cred-bundle=/run/podidentity.podcert.ate.dev/credential-bundle.pem
+          - --pod-identity-ca-certs=/run/podidentity.podcert.ate.dev/trust-bundle.pem
+          - --drain-delay=13s
+          - --drain-timeout=15s
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_UID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.uid
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: k8s.namespace.name=$(POD_NAMESPACE),k8s.pod.name=$(POD_NAME),k8s.pod.uid=$(POD_UID),service.instance.id=$(POD_UID)
+        # This stack's version; empty/unset means single-stack behavior.
+        - name: SUBSTRATE_VERSION
+          value: "${VERSION}"
+        envFrom:
+        - configMapRef:
+            name: ate-otel-config
+        - configMapRef:
+            name: ate-api-server-envvars
+            optional: true
+        volumeMounts:
+        - name: "servicedns"
+          mountPath: "/run/servicedns.podcert.ate.dev"
+        - name: "podidentity"
+          mountPath: "/run/podidentity.podcert.ate.dev"
+        - name: "actor-id-jwt-pool"
+          mountPath: "/run/actor-id-jwt-pool"
+        - name: "valkey-ca-certs"
+          mountPath: "/etc/valkey-ca"
+          readOnly: true
+        - name: "actor-id-ca-pool"
+          mountPath: "/run/actor-id-ca-pool"
+          readOnly: true
+        ports:
+        - containerPort: 443
+        - name: prometheus
+          containerPort: 9090
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 9090
+          initialDelaySeconds: 5
+          periodSeconds: 2
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 9090
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      volumes:
+      - name: "servicedns"
+        projected:
+          sources:
+          - podCertificate:
+              signerName: servicedns.podcert.ate.dev/identity
+              keyType: ECDSAP256
+              credentialBundlePath: credential-bundle.pem
+      - name: "podidentity"
+        projected:
+          sources:
+          - podCertificate:
+              signerName: podidentity.podcert.ate.dev/identity
+              keyType: ECDSAP256
+              credentialBundlePath: credential-bundle.pem
+          - clusterTrustBundle:
+              signerName: podidentity.podcert.ate.dev/identity
+              labelSelector:
+                matchLabels:
+                  podcert.ate.dev/canarying: live
+              path: trust-bundle.pem
+      - name: "actor-id-jwt-pool"
+        projected:
+          sources:
+          - secret:
+              name: "actor-id-jwt-pool"
+              items:
+              - key: "pool"
+                path: "pool.json"
+      - name: "valkey-ca-certs"
+        projected:
+          sources:
+          - secret:
+              name: "valkey-ca-certs"
+              items:
+              - key: "ca.crt"
+                path: "ca.crt"
+      - name: "actor-id-ca-pool"
+        projected:
+          sources:
+          - secret:
+              name: "actor-id-ca-pool"
+              items:
+              - key: "pool"
+                path: "pool.json"
+---
+# Per-stack backend Service. The dispatcher dials this stack directly at
+# ate-api-${SFX}.ate-system.svc; the selecting Service also gets the pods a
+# matching servicedns DNS SAN.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ate-api-${SFX}
+  namespace: ate-system
+  labels:
+    substrate-version: "${VERSION}"
+spec:
+  selector:
+    app: ate-api-server
+    substrate-version: "${VERSION}"
+  ports:
+  - name: grpc
+    protocol: TCP
+    port: 443
+    targetPort: 443
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: ate-controller-${SFX}
+  namespace: ate-system
+  labels:
+    app: ate-controller
+    substrate-version: "${VERSION}"
+spec:
+  selector:
+    app: ate-controller
+    substrate-version: "${VERSION}"
+  ports:
+  - name: metrics
+    port: 8080
+    targetPort: metrics
+    protocol: TCP
+---
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: ate-controller-${SFX}
+  namespace: ate-system
+  labels:
+    substrate-version: "${VERSION}"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ate-controller
+      substrate-version: "${VERSION}"
+  template:
+    metadata:
+      labels:
+        app: ate-controller
+        substrate-version: "${VERSION}"
+    spec:
+      serviceAccountName: ate-controller
+      containers:
+      - name: ate-controller
+        image: ko://github.com/agent-substrate/substrate/cmd/atecontroller
+        args:
+        - --ateapi-ca-file=/run/servicedns-ca/trust-bundle.pem
+        - --ateapi-client-cert=/run/podidentity.podcert.ate.dev/credential-bundle.pem
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_UID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.uid
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: k8s.namespace.name=$(POD_NAMESPACE),k8s.pod.name=$(POD_NAME),k8s.pod.uid=$(POD_UID),service.instance.id=$(POD_UID)
+        # This stack's version; scopes the WorkerPool cache and stamps worker
+        # pods. Empty/unset means single-stack behavior.
+        - name: SUBSTRATE_VERSION
+          value: "${VERSION}"
+        envFrom:
+        - configMapRef:
+            name: ate-otel-config
+        ports:
+        - name: metrics
+          containerPort: 8080
+          protocol: TCP
+        - name: healthz
+          containerPort: 8081
+          protocol: TCP
+        volumeMounts:
+        - name: "podidentity"
+          mountPath: "/run/podidentity.podcert.ate.dev"
+        - name: "servicedns-ca"
+          mountPath: "/run/servicedns-ca"
+      volumes:
+      - name: "podidentity"
+        projected:
+          sources:
+          - podCertificate:
+              signerName: podidentity.podcert.ate.dev/identity
+              keyType: ECDSAP256
+              credentialBundlePath: credential-bundle.pem
+      - name: "servicedns-ca"
+        projected:
+          sources:
+          - clusterTrustBundle:
+              signerName: servicedns.podcert.ate.dev/identity
+              labelSelector:
+                matchLabels:
+                  podcert.ate.dev/canarying: live
+              path: trust-bundle.pem
+---
+# nodeSelector keeps the two stacks' atelets node-disjoint (hostPorts 8085/9090
+# and the /var/lib/ateom-gvisor hostPath cannot be shared on one node).
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: atelet-${SFX}
+  namespace: ate-system
+  labels:
+    app: atelet
+    substrate-version: "${VERSION}"
+spec:
+  selector:
+    matchLabels:
+      app: atelet
+      substrate-version: "${VERSION}"
+  template:
+    metadata:
+      labels:
+        app: atelet
+        substrate-version: "${VERSION}"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    spec:
+      nodeSelector:
+        substrate-version: "${VERSION}"
+      serviceAccountName: atelet
+      # Budget for the full shutdown sequence: --drain-delay (0) +
+      # --drain-timeout (5m), sized for multi-GiB snapshot streams.
+      terminationGracePeriodSeconds: 330
+      containers:
+      - name: atelet
+        image: ko://github.com/agent-substrate/substrate/cmd/atelet
+        args:
+        - --gcp-auth-for-image-pulls=true
+        - --grpc-server-cred-bundle=/run/podidentity.podcert.ate.dev/credential-bundle.pem
+        - --client-ca-certs=/run/podidentity.podcert.ate.dev/trust-bundle.pem
+        - --drain-delay=0s
+        - --drain-timeout=5m
+        securityContext:
+          runAsUser: 0
+          runAsGroup: 0
+          capabilities:
+            drop:
+            - ALL
+        env:
+        - name: MY_NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_UID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.uid
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: k8s.namespace.name=$(POD_NAMESPACE),k8s.pod.name=$(POD_NAME),k8s.pod.uid=$(POD_UID),service.instance.id=$(POD_UID)
+        - name: ATE_STORAGE_BACKEND
+          value: "gcs"
+        envFrom:
+        - configMapRef:
+            name: ate-otel-config
+        ports:
+        - name: grpc
+          containerPort: 8085
+          hostPort: 8085
+        - name: prometheus
+          containerPort: 9090
+          hostPort: 9090
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 9090
+          initialDelaySeconds: 5
+          periodSeconds: 2
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 9090
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        volumeMounts:
+        - name: run-ateom
+          mountPath: /var/lib/ateom-gvisor
+        - name: podidentity
+          mountPath: /run/podidentity.podcert.ate.dev
+      volumes:
+      - name: run-ateom
+        hostPath:
+          path: /var/lib/ateom-gvisor
+          type: DirectoryOrCreate
+      # atelet is not behind a Service, so it uses a podidentity (SPIFFE) cert;
+      # the clusterTrustBundle verifies the apiserver's client certificate.
+      - name: podidentity
+        projected:
+          sources:
+          - podCertificate:
+              signerName: podidentity.podcert.ate.dev/identity
+              keyType: ECDSAP256
+              credentialBundlePath: credential-bundle.pem
+          - clusterTrustBundle:
+              signerName: podidentity.podcert.ate.dev/identity
+              labelSelector:
+                matchLabels:
+                  podcert.ate.dev/canarying: live
+              path: trust-bundle.pem
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: atenet-router-envoy-config-${SFX}
+  namespace: ate-system
+  labels:
+    substrate-version: "${VERSION}"
+data:
+  envoy.yaml: |
+    admin:
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 9901
+
+    node:
+      id: substrate-envoy-node
+      cluster: substrate-router-cluster
+
+    dynamic_resources:
+      lds_config:
+        resource_api_version: V3
+        ads: {}
+      cds_config:
+        resource_api_version: V3
+        ads: {}
+      ads_config:
+        api_type: GRPC
+        transport_api_version: V3
+        grpc_services:
+        - envoy_grpc:
+            cluster_name: xds_cluster
+
+    static_resources:
+      clusters:
+      - name: xds_cluster
+        connect_timeout: 0.25s
+        type: STRICT_DNS
+        lb_policy: ROUND_ROBIN
+        typed_extension_protocol_options:
+          envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+            "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+            explicit_http_config:
+              http2_protocol_options: {}
+        load_assignment:
+          cluster_name: xds_cluster
+          endpoints:
+          - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: 127.0.0.1
+                    port_value: 18000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: atenet-router-${SFX}
+  namespace: ate-system
+  labels:
+    app: atenet-router
+    substrate-version: "${VERSION}"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: atenet-router
+      substrate-version: "${VERSION}"
+  template:
+    metadata:
+      labels:
+        # app: atenet-router keeps the pod behind the shared door (its selector
+        # adds substrate-version, patched at Flip) and inside the atunnel trust
+        # contract via SA atenet-router.
+        app: atenet-router
+        substrate-version: "${VERSION}"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    spec:
+      serviceAccountName: atenet-router
+      containers:
+      - name: atenet-router
+        image: ko://github.com/agent-substrate/substrate/cmd/atenet
+        args:
+        - "router"
+        - "--standalone"
+        - "--namespace=ate-system"
+        - "--port-http=8080"
+        - "--port-xds=18000"
+        - "--port-extproc=50051"
+        - "--extproc-address=127.0.0.1"
+        - "--status-port=4040"
+        - "--port-https=8443"
+        - "--envoy-cert-path=/run/servicedns.podcert.ate.dev/credential-bundle.pem"
+        - "--ateapi-address=dns:///api.ate-system.svc:443"
+        - "--ateapi-ca-file=/run/servicedns-ca/trust-bundle.pem"
+        - "--ateapi-client-cert=/run/podidentity.podcert.ate.dev/credential-bundle.pem"
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_UID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.uid
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: k8s.namespace.name=$(POD_NAMESPACE),k8s.pod.name=$(POD_NAME),k8s.pod.uid=$(POD_UID),service.instance.id=$(POD_UID)
+        envFrom:
+        - configMapRef:
+            name: ate-otel-config
+        ports:
+        - name: xds
+          containerPort: 18000
+        - name: extproc
+          containerPort: 50051
+        - name: status
+          containerPort: 4040
+        - name: metrics
+          containerPort: 9090
+        volumeMounts:
+        - name: "podidentity"
+          mountPath: "/run/podidentity.podcert.ate.dev"
+        - name: "servicedns-ca"
+          mountPath: "/run/servicedns-ca"
+      - name: envoy
+        image: envoyproxy/envoy:v1.30-latest
+        command:
+        - "/usr/local/bin/envoy"
+        - "-c"
+        - "/etc/envoy/envoy.yaml"
+        - "--component-log-level"
+        - "upstream:debug,router:debug,ext_proc:debug"
+        ports:
+        - name: http
+          containerPort: 8080
+        - name: https
+          containerPort: 8443
+        - name: admin
+          containerPort: 9901
+        volumeMounts:
+        - name: envoy-config
+          mountPath: /etc/envoy
+        - name: "servicedns"
+          mountPath: "/run/servicedns.podcert.ate.dev"
+        - name: "podidentity"
+          mountPath: "/run/podidentity.podcert.ate.dev"
+      volumes:
+      - name: envoy-config
+        configMap:
+          name: atenet-router-envoy-config-${SFX}
+      - name: "servicedns"
+        projected:
+          sources:
+          - podCertificate:
+              signerName: servicedns.podcert.ate.dev/identity
+              keyType: ECDSAP256
+              credentialBundlePath: credential-bundle.pem
+      - name: "podidentity"
+        projected:
+          sources:
+          - podCertificate:
+              signerName: podidentity.podcert.ate.dev/identity
+              keyType: ECDSAP256
+              credentialBundlePath: credential-bundle.pem
+          - clusterTrustBundle:
+              signerName: podidentity.podcert.ate.dev/identity
+              labelSelector:
+                matchLabels:
+                  podcert.ate.dev/canarying: live
+              path: trust-bundle.pem
+      - name: "servicedns-ca"
+        projected:
+          sources:
+          - clusterTrustBundle:
+              signerName: servicedns.podcert.ate.dev/identity
+              labelSelector:
+                matchLabels:
+                  podcert.ate.dev/canarying: live
+              path: trust-bundle.pem
+---
+# Per-stack backend Service; also guarantees green router pods are selected by
+# a Service pre-Flip so the servicedns signer will issue their cert.
+apiVersion: v1
+kind: Service
+metadata:
+  name: atenet-router-${SFX}
+  namespace: ate-system
+  labels:
+    substrate-version: "${VERSION}"
+spec:
+  type: ClusterIP
+  selector:
+    app: atenet-router
+    substrate-version: "${VERSION}"
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+    protocol: TCP
+  - name: https
+    port: 443
+    targetPort: 8443
+    protocol: TCP
+  - name: status
+    port: 4040
+    targetPort: status
+    protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dns-${SFX}
+  namespace: ate-system
+  labels:
+    app: dns
+    substrate-version: "${VERSION}"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dns
+      substrate-version: "${VERSION}"
+  template:
+    metadata:
+      labels:
+        app: dns
+        substrate-version: "${VERSION}"
+    spec:
+      serviceAccountName: atenet-dns
+      shareProcessNamespace: true
+      initContainers:
+      - name: init-dns
+        image: busybox:1.36
+        command: ["sh", "-c"]
+        # Minimal Corefile to start CoreDNS; the controller updates it.
+        args:
+        - |
+          cat <<'EOF' > /etc/coredns/Corefile
+          .:53 {
+              errors
+              health :8080
+              ready :8181
+              reload
+          }
+          EOF
+        volumeMounts:
+        - name: dns-config-volume
+          mountPath: /etc/coredns
+      containers:
+      - name: coredns
+        image: coredns/coredns:1.11.1
+        imagePullPolicy: IfNotPresent
+        args: [ "-conf", "/etc/coredns/Corefile" ]
+        volumeMounts:
+        - name: dns-config-volume
+          mountPath: /etc/coredns
+        ports:
+        - name: dns
+          containerPort: 53
+          protocol: UDP
+        - name: dns-tcp
+          containerPort: 53
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 5
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8181
+            scheme: HTTP
+          initialDelaySeconds: 5
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+      - name: dns-controller
+        image: ko://github.com/agent-substrate/substrate/cmd/atenet
+        args:
+        - "dns"
+        - "--log-level=debug"
+        - "--interval=10s"
+        - "--corefile-path=/etc/coredns/Corefile"
+        volumeMounts:
+        - name: dns-config-volume
+          mountPath: /etc/coredns
+      volumes:
+        - name: dns-config-volume
+          emptyDir: {}
+---
+# This stack's worker pool; both dualcounter ActorTemplates select it through
+# {workload, substrate-version}. Worker pods land on this stack's nodes with
+# its atelet.
+apiVersion: ate.dev/v1alpha1
+kind: WorkerPool
+metadata:
+  name: counter-${SFX}
+  namespace: ate-demo-dual
+  labels:
+    workload: dualcounter
+    substrate-version: "${VERSION}"
+spec:
+  replicas: 4
+  ateomImage: ko://github.com/agent-substrate/substrate/cmd/ateom-gvisor
+  template:
+    nodeSelector:
+      substrate-version: "${VERSION}"

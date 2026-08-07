@@ -28,10 +28,13 @@ import (
 	prombridge "go.opentelemetry.io/contrib/bridges/prometheus"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 
@@ -135,9 +138,24 @@ func main() {
 
 	ateapiClient := ateapipb.NewControlClient(ateapiConn)
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	mgrOpts := ctrl.Options{
 		Scheme: scheme,
-	})
+	}
+	// Dual-stack: fence this controller to its own stack's WorkerPools so two
+	// stacks' controllers don't fight over the same Deployments (same SSA field
+	// owner + ForceOwnership). ActorTemplates stay unfiltered: shared objects.
+	substrateVersion := os.Getenv("SUBSTRATE_VERSION")
+	if substrateVersion != "" {
+		mgrOpts.Cache = cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				&clientv1alpha1.WorkerPool{}: {
+					Label: labels.SelectorFromSet(labels.Set{"substrate-version": substrateVersion}),
+				},
+			},
+		}
+	}
+
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), mgrOpts)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
@@ -151,6 +169,7 @@ func main() {
 		OTelMetricExportTimeout:  *otelMetricExportTimeout,
 		OTelTracesSampler:        *otelTracesSampler,
 		OTelTracesSamplerArg:     *otelTracesSamplerArg,
+		SubstrateVersion:         substrateVersion,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "WorkerPool")
 		os.Exit(1)

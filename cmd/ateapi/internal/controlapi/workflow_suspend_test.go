@@ -402,3 +402,111 @@ func TestCommitSnapshotScope(t *testing.T) {
 		})
 	}
 }
+
+// TestSuspendPrerequisites_FromPause covers the #791 from-pause gates: a
+// PAUSED actor with a node-pinned local snapshot may enter the suspend
+// workflow, and a SUSPENDING actor with a local snapshot but no worker
+// proceeds to the upload step instead of being treated as corrupted.
+func TestSuspendPrerequisites_FromPause(t *testing.T) {
+	pinned := &ateapipb.LocalSnapshotInfo{SnapshotPrefix: "prefix-1", NodeVmsWithLocalSnapshots: []string{"node-1"}}
+	unpinned := &ateapipb.LocalSnapshotInfo{SnapshotPrefix: "prefix-1"}
+
+	tests := []struct {
+		name      string
+		step      WorkflowStep[*SuspendInput, *SuspendState]
+		actor     *ateapipb.Actor
+		wantAllow bool
+	}{
+		{
+			name:      "mark allows paused with pinned local snapshot",
+			step:      &MarkSuspendingStep{},
+			actor:     &ateapipb.Actor{Status: ateapipb.Actor_STATUS_PAUSED, LocalSnapshotInfo: pinned},
+			wantAllow: true,
+		},
+		{
+			name:  "mark rejects paused without node pin",
+			step:  &MarkSuspendingStep{},
+			actor: &ateapipb.Actor{Status: ateapipb.Actor_STATUS_PAUSED, LocalSnapshotInfo: unpinned},
+		},
+		{
+			name:  "mark rejects paused without local snapshot",
+			step:  &MarkSuspendingStep{},
+			actor: &ateapipb.Actor{Status: ateapipb.Actor_STATUS_PAUSED},
+		},
+		{
+			name:      "call allows suspending without worker but with local snapshot",
+			step:      &CallAteletSuspendStep{},
+			actor:     &ateapipb.Actor{Status: ateapipb.Actor_STATUS_SUSPENDING, LocalSnapshotInfo: pinned},
+			wantAllow: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.step.CheckPrerequisite(context.Background(), &SuspendInput{ActorRef: resources.ActorRef{Atespace: "team-a", Name: "id1"}}, &SuspendState{Actor: tc.actor})
+			assertPrerequisiteResult(t, tc.actor.GetStatus(), err, tc.wantAllow)
+		})
+	}
+}
+
+// TestFinalizeSuspendedStep_FromPause verifies finalize for a from-pause
+// suspend: no worker to free, snapshot recorded with the pause capture's
+// scope (template onPause, not onCommit), node pin and in-progress fields
+// cleared, status SUSPENDED.
+func TestFinalizeSuspendedStep_FromPause(t *testing.T) {
+	ctx := context.Background()
+	persistence := newTestPersistence(t)
+
+	const location = "gs://bucket/root/snapshots/2026-08-07t01-02-03z-abcdef"
+	created, err := persistence.CreateActor(ctx, &ateapipb.Actor{
+		Metadata:           &ateapipb.ResourceMetadata{Atespace: "team-a", Name: "actor-1"},
+		Status:             ateapipb.Actor_STATUS_SUSPENDING,
+		InProgressSnapshot: location,
+		LocalSnapshotInfo:  &ateapipb.LocalSnapshotInfo{SnapshotPrefix: "prefix-1", NodeVmsWithLocalSnapshots: []string{"node-1"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateActor: %v", err)
+	}
+
+	state := &SuspendState{
+		SourceVersion: created.GetMetadata().GetVersion(),
+		ActorTemplate: &atev1alpha1.ActorTemplate{Spec: atev1alpha1.ActorTemplateSpec{
+			SnapshotsConfig: atev1alpha1.SnapshotsConfig{
+				Location: "gs://bucket/root",
+				OnPause:  atev1alpha1.SnapshotScopeData,
+				OnCommit: atev1alpha1.SnapshotScopeFull,
+			},
+		}},
+	}
+	input := &SuspendInput{ActorRef: resources.ActorRef{Atespace: "team-a", Name: "actor-1"}}
+	if err := (&FinalizeSuspendedStep{store: persistence}).Execute(ctx, input, state); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	stored, err := persistence.GetActor(ctx, input.ActorRef)
+	if err != nil {
+		t.Fatalf("GetActor: %v", err)
+	}
+	if stored.GetStatus() != ateapipb.Actor_STATUS_SUSPENDED {
+		t.Errorf("status = %v, want SUSPENDED", stored.GetStatus())
+	}
+	if stored.GetLocalSnapshotInfo() != nil {
+		t.Errorf("LocalSnapshotInfo = %v, want cleared", stored.GetLocalSnapshotInfo())
+	}
+	if stored.GetInProgressSnapshot() != "" {
+		t.Errorf("InProgressSnapshot = %q, want cleared", stored.GetInProgressSnapshot())
+	}
+	ref := stored.GetLatestSnapshot()
+	if ref.GetName() == "" {
+		t.Fatalf("no ActorSnapshot recorded: %v", stored)
+	}
+	snapshot, storedLocation, err := persistence.GetActorSnapshot(ctx, ref.GetAtespace(), ref.GetName())
+	if err != nil {
+		t.Fatalf("GetActorSnapshot: %v", err)
+	}
+	if storedLocation != location {
+		t.Errorf("snapshot location = %q, want %q", storedLocation, location)
+	}
+	if got := snapshot.GetContentScope(); got != ateapipb.SnapshotContentScope_SNAPSHOT_CONTENT_SCOPE_DATA {
+		t.Errorf("ContentScope = %v, want DATA (template onPause)", got)
+	}
+}

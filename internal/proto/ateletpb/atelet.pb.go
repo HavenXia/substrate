@@ -1558,6 +1558,139 @@ func (*RestoreResponse) Descriptor() ([]byte, []int) {
 	return file_atelet_proto_rawDescGZIP(), []int{19}
 }
 
+type UploadCheckpointRequest struct {
+	state                  protoimpl.MessageState `protogen:"open.v1"`
+	Atespace               string                 `protobuf:"bytes,1,opt,name=atespace,proto3" json:"atespace,omitempty"`
+	ActorName              string                 `protobuf:"bytes,2,opt,name=actor_name,json=actorName,proto3" json:"actor_name,omitempty"`
+	ActorUid               string                 `protobuf:"bytes,3,opt,name=actor_uid,json=actorUid,proto3" json:"actor_uid,omitempty"`
+	ActorTemplateNamespace string                 `protobuf:"bytes,4,opt,name=actor_template_namespace,json=actorTemplateNamespace,proto3" json:"actor_template_namespace,omitempty"`
+	ActorTemplateName      string                 `protobuf:"bytes,5,opt,name=actor_template_name,json=actorTemplateName,proto3" json:"actor_template_name,omitempty"`
+	// The local checkpoint to upload: a single path segment under the actor's
+	// local checkpoints directory, as previously written by a
+	// CHECKPOINT_TYPE_LOCAL Checkpoint.
+	LocalSnapshotPrefix string `protobuf:"bytes,6,opt,name=local_snapshot_prefix,json=localSnapshotPrefix,proto3" json:"local_snapshot_prefix,omitempty"`
+	// The object storage URI prefix to upload the checkpoint below (see
+	// ExternalCheckpointConfiguration.snapshot_uri_prefix).
+	SnapshotUriPrefix string `protobuf:"bytes,7,opt,name=snapshot_uri_prefix,json=snapshotUriPrefix,proto3" json:"snapshot_uri_prefix,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *UploadCheckpointRequest) Reset() {
+	*x = UploadCheckpointRequest{}
+	mi := &file_atelet_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UploadCheckpointRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UploadCheckpointRequest) ProtoMessage() {}
+
+func (x *UploadCheckpointRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_atelet_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UploadCheckpointRequest.ProtoReflect.Descriptor instead.
+func (*UploadCheckpointRequest) Descriptor() ([]byte, []int) {
+	return file_atelet_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *UploadCheckpointRequest) GetAtespace() string {
+	if x != nil {
+		return x.Atespace
+	}
+	return ""
+}
+
+func (x *UploadCheckpointRequest) GetActorName() string {
+	if x != nil {
+		return x.ActorName
+	}
+	return ""
+}
+
+func (x *UploadCheckpointRequest) GetActorUid() string {
+	if x != nil {
+		return x.ActorUid
+	}
+	return ""
+}
+
+func (x *UploadCheckpointRequest) GetActorTemplateNamespace() string {
+	if x != nil {
+		return x.ActorTemplateNamespace
+	}
+	return ""
+}
+
+func (x *UploadCheckpointRequest) GetActorTemplateName() string {
+	if x != nil {
+		return x.ActorTemplateName
+	}
+	return ""
+}
+
+func (x *UploadCheckpointRequest) GetLocalSnapshotPrefix() string {
+	if x != nil {
+		return x.LocalSnapshotPrefix
+	}
+	return ""
+}
+
+func (x *UploadCheckpointRequest) GetSnapshotUriPrefix() string {
+	if x != nil {
+		return x.SnapshotUriPrefix
+	}
+	return ""
+}
+
+type UploadCheckpointResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UploadCheckpointResponse) Reset() {
+	*x = UploadCheckpointResponse{}
+	mi := &file_atelet_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UploadCheckpointResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UploadCheckpointResponse) ProtoMessage() {}
+
+func (x *UploadCheckpointResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_atelet_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UploadCheckpointResponse.ProtoReflect.Descriptor instead.
+func (*UploadCheckpointResponse) Descriptor() ([]byte, []int) {
+	return file_atelet_proto_rawDescGZIP(), []int{21}
+}
+
 var File_atelet_proto protoreflect.FileDescriptor
 
 const file_atelet_proto_rawDesc = "" +
@@ -1667,7 +1800,17 @@ const file_atelet_proto_rawDesc = "" +
 	"\x05scope\x18\v \x01(\x0e2\x15.atelet.SnapshotScopeR\x05scope\x12;\n" +
 	"\x1agolden_snapshot_uri_prefix\x18\f \x01(\tR\x17goldenSnapshotUriPrefixB\b\n" +
 	"\x06config\"\x11\n" +
-	"\x0fRestoreResponse*`\n" +
+	"\x0fRestoreResponse\"\xbf\x02\n" +
+	"\x17UploadCheckpointRequest\x12\x1a\n" +
+	"\batespace\x18\x01 \x01(\tR\batespace\x12\x1d\n" +
+	"\n" +
+	"actor_name\x18\x02 \x01(\tR\tactorName\x12\x1b\n" +
+	"\tactor_uid\x18\x03 \x01(\tR\bactorUid\x128\n" +
+	"\x18actor_template_namespace\x18\x04 \x01(\tR\x16actorTemplateNamespace\x12.\n" +
+	"\x13actor_template_name\x18\x05 \x01(\tR\x11actorTemplateName\x122\n" +
+	"\x15local_snapshot_prefix\x18\x06 \x01(\tR\x13localSnapshotPrefix\x12.\n" +
+	"\x13snapshot_uri_prefix\x18\a \x01(\tR\x11snapshotUriPrefix\"\x1a\n" +
+	"\x18UploadCheckpointResponse*`\n" +
 	"\n" +
 	"VolumeType\x12\x1b\n" +
 	"\x17VOLUME_TYPE_UNSPECIFIED\x10\x00\x12\x1b\n" +
@@ -1681,12 +1824,13 @@ const file_atelet_proto_rawDesc = "" +
 	"\x1aSNAPSHOT_SCOPE_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13SNAPSHOT_SCOPE_FULL\x10\x01\x12\x17\n" +
 	"\x13SNAPSHOT_SCOPE_DATA\x10\x02\x12!\n" +
-	"\x1dSNAPSHOT_SCOPE_DATA_ON_GOLDEN\x10\x032\xc4\x01\n" +
+	"\x1dSNAPSHOT_SCOPE_DATA_ON_GOLDEN\x10\x032\x9d\x02\n" +
 	"\vAteomHerder\x120\n" +
 	"\x03Run\x12\x12.atelet.RunRequest\x1a\x13.atelet.RunResponse\"\x00\x12E\n" +
 	"\n" +
 	"Checkpoint\x12\x19.atelet.CheckpointRequest\x1a\x1a.atelet.CheckpointResponse\"\x00\x12<\n" +
-	"\aRestore\x12\x16.atelet.RestoreRequest\x1a\x17.atelet.RestoreResponse\"\x00B>Z<github.com/agent-substrate/substrate/internal/proto/ateletpbb\x06proto3"
+	"\aRestore\x12\x16.atelet.RestoreRequest\x1a\x17.atelet.RestoreResponse\"\x00\x12W\n" +
+	"\x10UploadCheckpoint\x12\x1f.atelet.UploadCheckpointRequest\x1a .atelet.UploadCheckpointResponse\"\x00B>Z<github.com/agent-substrate/substrate/internal/proto/ateletpbb\x06proto3"
 
 var (
 	file_atelet_proto_rawDescOnce sync.Once
@@ -1701,7 +1845,7 @@ func file_atelet_proto_rawDescGZIP() []byte {
 }
 
 var file_atelet_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_atelet_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
+var file_atelet_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_atelet_proto_goTypes = []any{
 	(VolumeType)(0),                         // 0: atelet.VolumeType
 	(CheckpointType)(0),                     // 1: atelet.CheckpointType
@@ -1726,14 +1870,16 @@ var file_atelet_proto_goTypes = []any{
 	(*CheckpointResponse)(nil),              // 20: atelet.CheckpointResponse
 	(*RestoreRequest)(nil),                  // 21: atelet.RestoreRequest
 	(*RestoreResponse)(nil),                 // 22: atelet.RestoreResponse
-	nil,                                     // 23: atelet.ArchAssets.FilesEntry
-	nil,                                     // 24: atelet.SandboxAssets.AssetsEntry
+	(*UploadCheckpointRequest)(nil),         // 23: atelet.UploadCheckpointRequest
+	(*UploadCheckpointResponse)(nil),        // 24: atelet.UploadCheckpointResponse
+	nil,                                     // 25: atelet.ArchAssets.FilesEntry
+	nil,                                     // 26: atelet.SandboxAssets.AssetsEntry
 }
 var file_atelet_proto_depIdxs = []int32{
 	7,  // 0: atelet.RunRequest.spec:type_name -> atelet.WorkloadSpec
 	6,  // 1: atelet.RunRequest.sandbox_assets:type_name -> atelet.SandboxAssets
-	23, // 2: atelet.ArchAssets.files:type_name -> atelet.ArchAssets.FilesEntry
-	24, // 3: atelet.SandboxAssets.assets:type_name -> atelet.SandboxAssets.AssetsEntry
+	25, // 2: atelet.ArchAssets.files:type_name -> atelet.ArchAssets.FilesEntry
+	26, // 3: atelet.SandboxAssets.assets:type_name -> atelet.SandboxAssets.AssetsEntry
 	12, // 4: atelet.WorkloadSpec.containers:type_name -> atelet.Container
 	10, // 5: atelet.WorkloadSpec.volumes:type_name -> atelet.Volume
 	0,  // 6: atelet.Volume.type:type_name -> atelet.VolumeType
@@ -1758,11 +1904,13 @@ var file_atelet_proto_depIdxs = []int32{
 	3,  // 25: atelet.AteomHerder.Run:input_type -> atelet.RunRequest
 	19, // 26: atelet.AteomHerder.Checkpoint:input_type -> atelet.CheckpointRequest
 	21, // 27: atelet.AteomHerder.Restore:input_type -> atelet.RestoreRequest
-	16, // 28: atelet.AteomHerder.Run:output_type -> atelet.RunResponse
-	20, // 29: atelet.AteomHerder.Checkpoint:output_type -> atelet.CheckpointResponse
-	22, // 30: atelet.AteomHerder.Restore:output_type -> atelet.RestoreResponse
-	28, // [28:31] is the sub-list for method output_type
-	25, // [25:28] is the sub-list for method input_type
+	23, // 28: atelet.AteomHerder.UploadCheckpoint:input_type -> atelet.UploadCheckpointRequest
+	16, // 29: atelet.AteomHerder.Run:output_type -> atelet.RunResponse
+	20, // 30: atelet.AteomHerder.Checkpoint:output_type -> atelet.CheckpointResponse
+	22, // 31: atelet.AteomHerder.Restore:output_type -> atelet.RestoreResponse
+	24, // 32: atelet.AteomHerder.UploadCheckpoint:output_type -> atelet.UploadCheckpointResponse
+	29, // [29:33] is the sub-list for method output_type
+	25, // [25:29] is the sub-list for method input_type
 	25, // [25:25] is the sub-list for extension type_name
 	25, // [25:25] is the sub-list for extension extendee
 	0,  // [0:25] is the sub-list for field type_name
@@ -1791,7 +1939,7 @@ func file_atelet_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_atelet_proto_rawDesc), len(file_atelet_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   22,
+			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

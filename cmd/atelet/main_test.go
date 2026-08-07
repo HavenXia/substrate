@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -223,6 +224,18 @@ func validRestoreRequest() *ateletpb.RestoreRequest {
 	}
 }
 
+func validUploadCheckpointRequest() *ateletpb.UploadCheckpointRequest {
+	return &ateletpb.UploadCheckpointRequest{
+		Atespace:               "ate-demo",
+		ActorName:              "counter-1",
+		ActorTemplateNamespace: "ate-demo",
+		ActorTemplateName:      "counter",
+		ActorUid:               "123e4567-e89b-12d3-a456-426614174000",
+		LocalSnapshotPrefix:    "counter-1-2026-01-01T00:00:00Z-abcd",
+		SnapshotUriPrefix:      "gs://bucket/actors/1/snapshots/2/",
+	}
+}
+
 func TestValidateRunRequest(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -376,6 +389,41 @@ func TestValidateRestoreRequest(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := validateRestoreRequest(tc.req); (err != nil) != tc.wantErr {
 				t.Errorf("validateRestoreRequest err = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateUploadCheckpointRequest(t *testing.T) {
+	makeReq := func(opts ...func(*ateletpb.UploadCheckpointRequest)) *ateletpb.UploadCheckpointRequest {
+		r := validUploadCheckpointRequest()
+		for _, opt := range opts {
+			opt(r)
+		}
+		return r
+	}
+
+	tests := []struct {
+		name    string
+		req     *ateletpb.UploadCheckpointRequest
+		wantErr bool
+	}{
+		{"valid", makeReq(), false},
+		{"invalid atespace", makeReq(func(r *ateletpb.UploadCheckpointRequest) { r.Atespace = "../escape" }), true},
+		{"invalid actor name", makeReq(func(r *ateletpb.UploadCheckpointRequest) { r.ActorName = "../escape" }), true},
+		{"invalid actor uid", makeReq(func(r *ateletpb.UploadCheckpointRequest) { r.ActorUid = "../escape" }), true},
+		{"invalid actor template namespace", makeReq(func(r *ateletpb.UploadCheckpointRequest) { r.ActorTemplateNamespace = "Not_Valid" }), true},
+		{"invalid actor template name", makeReq(func(r *ateletpb.UploadCheckpointRequest) { r.ActorTemplateName = "Not_Valid" }), true},
+		{"empty local snapshot prefix", makeReq(func(r *ateletpb.UploadCheckpointRequest) { r.LocalSnapshotPrefix = "" }), true},
+		{"nested local snapshot prefix", makeReq(func(r *ateletpb.UploadCheckpointRequest) { r.LocalSnapshotPrefix = "pause/2" }), true},
+		{"traversal local snapshot prefix", makeReq(func(r *ateletpb.UploadCheckpointRequest) { r.LocalSnapshotPrefix = ".." }), true},
+		{"empty snapshot uri", makeReq(func(r *ateletpb.UploadCheckpointRequest) { r.SnapshotUriPrefix = "" }), true},
+		{"bucketless snapshot uri", makeReq(func(r *ateletpb.UploadCheckpointRequest) { r.SnapshotUriPrefix = "relative/path" }), true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validateUploadCheckpointRequest(tc.req); (err != nil) != tc.wantErr {
+				t.Errorf("validateUploadCheckpointRequest err = %v, wantErr %v", err, tc.wantErr)
 			}
 		})
 	}
@@ -599,6 +647,15 @@ func TestRPCBoundariesReject(t *testing.T) {
 			ActorUid: okActorUID, TargetAteomUid: badUID, Spec: okSpec,
 		})
 		wantInvalidArgument(t, "Restore", err)
+	})
+	t.Run("UploadCheckpoint", func(t *testing.T) {
+		// Traversal snapshot prefix instead of an ateom UID: the request has
+		// no ateom (nothing is running).
+		_, err := s.UploadCheckpoint(ctx, &ateletpb.UploadCheckpointRequest{
+			Atespace: okAtespace, ActorName: okID, ActorUid: okActorUID,
+			LocalSnapshotPrefix: badUID, SnapshotUriPrefix: "gs://bucket/actors/1/snapshots/2/",
+		})
+		wantInvalidArgument(t, "UploadCheckpoint", err)
 	})
 }
 
@@ -862,6 +919,87 @@ func TestDownloadCombinedCheckpoint(t *testing.T) {
 		if string(got) != content {
 			t.Errorf("%s content = %q, want %q", name, got, content)
 		}
+	}
+}
+
+// recordingObjectStorage captures every PutObject body in call order,
+// keyed "<bucket>/<object>".
+type recordingObjectStorage struct {
+	mu    sync.Mutex
+	order []string
+	data  map[string][]byte
+}
+
+func (*recordingObjectStorage) GetObject(context.Context, string, string) (io.ReadCloser, error) {
+	return nil, errors.New("GetObject not supported")
+}
+
+func (r *recordingObjectStorage) PutObject(_ context.Context, bucket, object string, reader io.Reader) error {
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := bucket + "/" + object
+	r.order = append(r.order, key)
+	if r.data == nil {
+		r.data = map[string][]byte{}
+	}
+	r.data[key] = body
+	return nil
+}
+
+// TestUploadCheckpointDir verifies the shared upload helper (Checkpoint's
+// EXTERNAL branch and UploadCheckpoint) ships exactly the manifest's snapshot
+// files under their .zstd names, and the manifest bytes verbatim and LAST, so
+// a snapshot never looks complete before its files are all present.
+func TestUploadCheckpointDir(t *testing.T) {
+	dir := t.TempDir()
+	for _, f := range []string{"checkpoint.img", "pages-0"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("state of "+f), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := &sandboxAssetsRecord{SnapshotFiles: []string{"checkpoint.img", "pages-0"}}
+	manifest := []byte(`{"sandboxClass":"gvisor","snapshotFiles":["checkpoint.img","pages-0"]}`)
+
+	store := &recordingObjectStorage{}
+	s := &AteomHerder{gcsClient: store}
+	if err := s.uploadCheckpointDir(context.Background(), "gs://bucket/actors/1/snapshots/2/", dir, rec, manifest); err != nil {
+		t.Fatalf("uploadCheckpointDir: %v", err)
+	}
+
+	wantKeys := map[string]bool{
+		"bucket/actors/1/snapshots/2/checkpoint.img.zstd": true,
+		"bucket/actors/1/snapshots/2/pages-0.zstd":        true,
+		"bucket/actors/1/snapshots/2/manifest.json":       true,
+	}
+	if len(store.order) != len(wantKeys) {
+		t.Fatalf("uploaded objects %v, want keys %v", store.order, wantKeys)
+	}
+	for _, key := range store.order {
+		if !wantKeys[key] {
+			t.Errorf("unexpected object %s", key)
+		}
+	}
+	if last := store.order[len(store.order)-1]; last != "bucket/actors/1/snapshots/2/manifest.json" {
+		t.Errorf("last uploaded object = %s, want the manifest", last)
+	}
+	if got := store.data["bucket/actors/1/snapshots/2/manifest.json"]; !bytes.Equal(got, manifest) {
+		t.Errorf("uploaded manifest = %q, want the verbatim bytes %q", got, manifest)
+	}
+}
+
+// A missing local checkpoint must surface as NotFound (not DataLoss): a
+// successful upload prunes the directory, so a retried UploadCheckpoint lands
+// exactly here and the api must be able to tell "already done" from "lost".
+func TestUploadCheckpointMissingLocalCheckpointIsNotFound(t *testing.T) {
+	s := &AteomHerder{}
+	// Valid request whose actor UID has no on-node state.
+	_, err := s.UploadCheckpoint(context.Background(), validUploadCheckpointRequest())
+	if code := status.Code(err); code != codes.NotFound {
+		t.Fatalf("UploadCheckpoint with no local checkpoint returned code %v (err %v), want NotFound", code, err)
 	}
 }
 

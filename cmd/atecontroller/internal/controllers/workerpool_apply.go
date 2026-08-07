@@ -68,8 +68,12 @@ const (
 // buildDeploymentApplyConfig constructs the SSA apply configuration for the
 // Deployment managed by a WorkerPool. Only fields owned by this controller
 // are declared here. otel, when it carries an endpoint, is propagated to the
-// ateom container so it pushes telemetry to that collector.
-func buildDeploymentApplyConfig(wp *atev1alpha1.WorkerPool, otel ateomOTelSettings) *appsv1ac.DeploymentApplyConfiguration {
+// ateom container so it pushes telemetry to that collector. substrateVersion,
+// when non-empty, is stamped as the substrate-version label on the Deployment
+// and pod template so per-stack informers and teardown can select by version;
+// the selector stays version-free (Deployment selectors are immutable, and
+// the version is constant per pool anyway).
+func buildDeploymentApplyConfig(wp *atev1alpha1.WorkerPool, otel ateomOTelSettings, substrateVersion string) *appsv1ac.DeploymentApplyConfiguration {
 	containerAC := corev1ac.Container().
 		WithName("ateom").
 		WithImage(wp.Spec.AteomImage).
@@ -148,22 +152,28 @@ func buildDeploymentApplyConfig(wp *atev1alpha1.WorkerPool, otel ateomOTelSettin
 	podSpecAC.WithContainers(containerAC)
 	podSpecAC.WithTerminationGracePeriodSeconds(workerTerminationGracePeriodSeconds)
 
-	return appsv1ac.Deployment(wp.Name, wp.Namespace).
+	podLabels := map[string]string{
+		"ate.dev/worker-pool": wp.Name,
+	}
+	depAC := appsv1ac.Deployment(wp.Name, wp.Namespace).
 		WithOwnerReferences(metav1ac.OwnerReference().
 			WithAPIVersion(atev1alpha1.GroupVersion.String()).
 			WithKind("WorkerPool").
 			WithName(wp.Name).
 			WithUID(wp.UID).
 			WithController(true).
-			WithBlockOwnerDeletion(true)).
+			WithBlockOwnerDeletion(true))
+	if substrateVersion != "" {
+		depAC.WithLabels(map[string]string{"substrate-version": substrateVersion})
+		podLabels["substrate-version"] = substrateVersion
+	}
+	return depAC.
 		WithSpec(appsv1ac.DeploymentSpec().
 			WithReplicas(wp.Spec.Replicas).
 			WithSelector(metav1ac.LabelSelector().
 				WithMatchLabels(map[string]string{"ate.dev/worker-pool": wp.Name})).
 			WithTemplate(corev1ac.PodTemplateSpec().
-				WithLabels(map[string]string{
-					"ate.dev/worker-pool": wp.Name,
-				}).
+				WithLabels(podLabels).
 				WithSpec(podSpecAC)))
 }
 

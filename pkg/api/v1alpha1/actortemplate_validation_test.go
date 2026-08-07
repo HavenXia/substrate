@@ -1280,10 +1280,29 @@ func TestActorTemplateValidation(t *testing.T) {
 	}
 }
 
-func TestActorTemplateSpecImmutability(t *testing.T) {
+// POC: the spec-immutability CEL rule is dropped (see ActorTemplate.Spec), so
+// upgrades can repoint workerSelector on live templates.
+func TestActorTemplateWorkerSelectorUpdate(t *testing.T) {
 	ctx := t.Context()
 
-	baseTemplate := &ActorTemplate{
+	ns := namespaceForTest("worker-selector-update")
+	namespaceObj := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: ns,
+		},
+	}
+	if err := k8sClient.Create(ctx, namespaceObj); err != nil {
+		t.Fatalf("failed to create namespace: %v", err)
+	}
+	defer func() {
+		_ = k8sClient.Delete(ctx, namespaceObj)
+	}()
+
+	at := &ActorTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test",
+			Namespace: ns,
+		},
 		Spec: ActorTemplateSpec{
 			PauseImage: "pause@hash",
 			Containers: []Container{
@@ -1300,73 +1319,19 @@ func TestActorTemplateSpecImmutability(t *testing.T) {
 			},
 		},
 	}
-
-	tests := []struct {
-		name   string
-		mutate func(*ActorTemplate)
-	}{
-		{
-			name: "update-pause-image",
-			mutate: func(at *ActorTemplate) {
-				at.Spec.PauseImage = "pause@new"
-			},
-		},
-		{
-			name: "update-snapshots-config-location",
-			mutate: func(at *ActorTemplate) {
-				at.Spec.SnapshotsConfig.Location = "gs://new-bucket/new-folder"
-			},
-		},
-		{
-			name: "update-worker-selector",
-			mutate: func(at *ActorTemplate) {
-				at.Spec.WorkerSelector.MatchLabels["pool"] = "new-pool"
-			},
-		},
-		{
-			name: "update-sandbox-class",
-			mutate: func(at *ActorTemplate) {
-				at.Spec.SandboxClass = SandboxClassMicroVM
-			},
-		},
+	if err := k8sClient.Create(ctx, at); err != nil {
+		t.Fatalf("failed to create ActorTemplate: %v", err)
 	}
+	defer func() {
+		_ = k8sClient.Delete(ctx, at)
+	}()
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ns := namespaceForTest(tt.name)
-			namespaceObj := &corev1.Namespace{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: ns,
-				},
-			}
-			if err := k8sClient.Create(ctx, namespaceObj); err != nil {
-				t.Fatalf("failed to create namespace: %v", err)
-			}
-			defer func() {
-				_ = k8sClient.Delete(ctx, namespaceObj)
-			}()
-
-			at := baseTemplate.DeepCopy()
-			at.Namespace = ns
-			at.Name = "test"
-
-			if err := k8sClient.Create(ctx, at); err != nil {
-				t.Fatalf("failed to create ActorTemplate: %v", err)
-			}
-			defer func() {
-				_ = k8sClient.Delete(ctx, at)
-			}()
-
-			updatedAt := at.DeepCopy()
-			tt.mutate(updatedAt)
-
-			err := k8sClient.Update(ctx, updatedAt)
-			if err == nil {
-				t.Error("expected update to fail due to immutability, but it succeeded")
-			} else if !strings.Contains(err.Error(), "Spec is immutable") {
-				t.Errorf("expected error containing 'Spec is immutable', got: %v", err)
-			}
-		})
+	at.Spec.WorkerSelector.MatchLabels["pool"] = "new-pool"
+	if err := k8sClient.Update(ctx, at); err != nil {
+		t.Fatalf("workerSelector update should succeed without the immutability rule: %v", err)
+	}
+	if got := at.Spec.WorkerSelector.MatchLabels["pool"]; got != "new-pool" {
+		t.Errorf("stored workerSelector pool = %q, want %q", got, "new-pool")
 	}
 }
 

@@ -180,6 +180,10 @@ type FakeAteletServer struct {
 	RestoreRequest *ateletpb.RestoreRequest
 	FailRestore    error
 	RestoreDelay   time.Duration
+
+	UploadCheckpointCalled  bool
+	UploadCheckpointRequest *ateletpb.UploadCheckpointRequest
+	FailUploadCheckpoint    error
 }
 
 func (f *FakeAteletServer) Reset() {
@@ -197,6 +201,10 @@ func (f *FakeAteletServer) Reset() {
 	f.RestoreRequest = nil
 	f.FailRestore = nil
 	f.RestoreDelay = 0
+
+	f.UploadCheckpointCalled = false
+	f.UploadCheckpointRequest = nil
+	f.FailUploadCheckpoint = nil
 }
 
 func (f *FakeAteletServer) Run(ctx context.Context, req *ateletpb.RunRequest) (*ateletpb.RunResponse, error) {
@@ -235,6 +243,18 @@ func (f *FakeAteletServer) Restore(ctx context.Context, req *ateletpb.RestoreReq
 		return nil, f.FailRestore
 	}
 	return &ateletpb.RestoreResponse{}, nil
+}
+
+func (f *FakeAteletServer) UploadCheckpoint(ctx context.Context, req *ateletpb.UploadCheckpointRequest) (*ateletpb.UploadCheckpointResponse, error) {
+	f.Lock.Lock()
+	defer f.Lock.Unlock()
+
+	f.UploadCheckpointCalled = true
+	f.UploadCheckpointRequest = proto.Clone(req).(*ateletpb.UploadCheckpointRequest)
+	if f.FailUploadCheckpoint != nil {
+		return nil, f.FailUploadCheckpoint
+	}
+	return &ateletpb.UploadCheckpointResponse{}, nil
 }
 
 func (f *FakeAteletServer) lastRestoreRequest() *ateletpb.RestoreRequest {
@@ -2319,6 +2339,126 @@ func TestPauseActor(t *testing.T) {
 		})),
 	); diff != "" {
 		t.Errorf("GetActor response mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// pauseTestActor creates, resumes and pauses an actor, returning its PAUSED state.
+func pauseTestActor(t *testing.T, tc *testContext, ns, name string) *ateapipb.Actor {
+	t.Helper()
+	if _, err := tc.client.CreateActor(context.Background(), &ateapipb.CreateActorRequest{Actor: &ateapipb.Actor{
+		Metadata:               &ateapipb.ResourceMetadata{Atespace: testAtespace, Name: name},
+		ActorTemplateNamespace: ns,
+		ActorTemplateName:      "tmpl1",
+	}}); err != nil {
+		t.Fatalf("CreateActor failed: %v", err)
+	}
+	if _, err := tc.client.ResumeActor(context.Background(), &ateapipb.ResumeActorRequest{Actor: &ateapipb.ObjectRef{Atespace: testAtespace, Name: name}}); err != nil {
+		t.Fatalf("ResumeActor failed: %v", err)
+	}
+	paused, err := tc.client.PauseActor(context.Background(), &ateapipb.PauseActorRequest{Actor: &ateapipb.ObjectRef{Atespace: testAtespace, Name: name}})
+	if err != nil {
+		t.Fatalf("PauseActor failed: %v", err)
+	}
+	return paused.GetActor()
+}
+
+// TestSuspendActor_FromPause suspends a PAUSED actor without waking it (#791):
+// atelet UploadCheckpoint ships the local pause snapshot to the in-progress
+// URI, and finalize records the ActorSnapshot and clears the node pin.
+func TestSuspendActor_FromPause(t *testing.T) {
+	ns := namespaceForTest("ns-suspend-from-pause")
+	tc := setupTest(t, ns)
+	defer tc.cleanup()
+
+	createTemplate(t, tc, ns)
+	createWorkerPod(t, tc, ns, "worker-1", "node1", "pool1")
+
+	paused := pauseTestActor(t, tc, ns, "id1")
+	if paused.GetLocalSnapshotInfo().GetSnapshotPrefix() == "" {
+		t.Fatalf("paused actor has no local snapshot info: %v", paused)
+	}
+
+	suspended, err := tc.client.SuspendActor(context.Background(), &ateapipb.SuspendActorRequest{Actor: &ateapipb.ObjectRef{Atespace: testAtespace, Name: "id1"}})
+	if err != nil {
+		t.Fatalf("SuspendActor failed: %v", err)
+	}
+
+	if !tc.fakeAtelet.UploadCheckpointCalled {
+		t.Fatal("expected atelet UploadCheckpoint to be called")
+	}
+	// The pause LOCAL checkpoint must remain the last Checkpoint call: a
+	// from-pause suspend uploads, it does not re-checkpoint.
+	if got := tc.fakeAtelet.CheckpointRequest.GetType(); got != ateletpb.CheckpointType_CHECKPOINT_TYPE_LOCAL {
+		t.Errorf("last Checkpoint type = %v, want LOCAL (from the pause)", got)
+	}
+	req := tc.fakeAtelet.UploadCheckpointRequest
+	if req.GetAtespace() != testAtespace || req.GetActorName() != "id1" || req.GetActorUid() != paused.GetMetadata().GetUid() {
+		t.Errorf("UploadCheckpoint identity = %s/%s uid %s, want %s/id1 uid %s", req.GetAtespace(), req.GetActorName(), req.GetActorUid(), testAtespace, paused.GetMetadata().GetUid())
+	}
+	if got, want := req.GetLocalSnapshotPrefix(), paused.GetLocalSnapshotInfo().GetSnapshotPrefix(); got != want {
+		t.Errorf("UploadCheckpoint local prefix = %q, want %q", got, want)
+	}
+	if !strings.HasPrefix(req.GetSnapshotUriPrefix(), "gs://fake-fake-fake/snapshots/") {
+		t.Errorf("UploadCheckpoint uri prefix = %q, want under gs://fake-fake-fake/snapshots/", req.GetSnapshotUriPrefix())
+	}
+
+	actor := suspended.GetActor()
+	if actor.GetStatus() != ateapipb.Actor_STATUS_SUSPENDED {
+		t.Errorf("status = %v, want SUSPENDED", actor.GetStatus())
+	}
+	if actor.GetLocalSnapshotInfo() != nil {
+		t.Errorf("LocalSnapshotInfo = %v, want cleared", actor.GetLocalSnapshotInfo())
+	}
+	if actor.GetWorkerAssignment() != nil {
+		t.Errorf("WorkerAssignment = %v, want nil", actor.GetWorkerAssignment())
+	}
+	if actor.GetInProgressSnapshot() != "" {
+		t.Errorf("InProgressSnapshot = %q, want cleared", actor.GetInProgressSnapshot())
+	}
+	ref := actor.GetLatestSnapshot()
+	if ref.GetName() == "" {
+		t.Fatalf("no ActorSnapshot recorded: %v", actor)
+	}
+	_, location, err := tc.persistence.GetActorSnapshot(context.Background(), ref.GetAtespace(), ref.GetName())
+	if err != nil {
+		t.Fatalf("GetActorSnapshot: %v", err)
+	}
+	if location != req.GetSnapshotUriPrefix() {
+		t.Errorf("snapshot location = %q, want the uploaded prefix %q", location, req.GetSnapshotUriPrefix())
+	}
+
+	// The suspended actor resumes from the uploaded external snapshot.
+	if _, err := tc.client.ResumeActor(context.Background(), &ateapipb.ResumeActorRequest{Actor: &ateapipb.ObjectRef{Atespace: testAtespace, Name: "id1"}}); err != nil {
+		t.Fatalf("ResumeActor after from-pause suspend failed: %v", err)
+	}
+	if got := tc.fakeAtelet.lastRestoreRequest().GetExternalConfig().GetSnapshotUriPrefix(); got != location {
+		t.Errorf("restore uri = %q, want %q", got, location)
+	}
+}
+
+// TestSuspendActor_FromPauseMissingLocalSnapshot verifies NotFound from
+// UploadCheckpoint (local files gone from the node) crashes the actor.
+func TestSuspendActor_FromPauseMissingLocalSnapshot(t *testing.T) {
+	ns := namespaceForTest("ns-suspend-from-pause-notfound")
+	tc := setupTest(t, ns)
+	defer tc.cleanup()
+
+	createTemplate(t, tc, ns)
+	createWorkerPod(t, tc, ns, "worker-1", "node1", "pool1")
+
+	pauseTestActor(t, tc, ns, "id1")
+	tc.fakeAtelet.FailUploadCheckpoint = status.Error(codes.NotFound, "no local checkpoint for prefix")
+
+	if _, err := tc.client.SuspendActor(context.Background(), &ateapipb.SuspendActorRequest{Actor: &ateapipb.ObjectRef{Atespace: testAtespace, Name: "id1"}}); err == nil {
+		t.Fatal("SuspendActor succeeded, want error when the local snapshot is gone")
+	}
+
+	got, err := tc.persistence.GetActor(context.Background(), resources.ActorRef{Atespace: testAtespace, Name: "id1"})
+	if err != nil {
+		t.Fatalf("GetActor: %v", err)
+	}
+	if got.GetStatus() != ateapipb.Actor_STATUS_CRASHED {
+		t.Errorf("status = %v, want CRASHED", got.GetStatus())
 	}
 }
 

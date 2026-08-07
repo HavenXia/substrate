@@ -92,10 +92,17 @@ func (s *MarkSuspendingStep) IsComplete(ctx context.Context, input *SuspendInput
 	return state.Actor.GetStatus() == ateapipb.Actor_STATUS_SUSPENDING || state.Actor.GetStatus() == ateapipb.Actor_STATUS_SUSPENDED, nil
 }
 func (s *MarkSuspendingStep) CheckPrerequisite(ctx context.Context, input *SuspendInput, state *SuspendState) error {
-	if state.Actor.GetStatus() != ateapipb.Actor_STATUS_RUNNING {
-		return status.Errorf(codes.FailedPrecondition, "MarkSuspendingStep prerequisite not met for Actor: %s (got: %v, want %s)", input.ActorRef, state.Actor.GetStatus(), ateapipb.Actor_STATUS_RUNNING)
+	if state.Actor.GetStatus() == ateapipb.Actor_STATUS_RUNNING {
+		return nil
 	}
-	return nil
+	// A PAUSED actor can be suspended without waking it by uploading the
+	// local pause snapshot from its pinned node (#791).
+	if state.Actor.GetStatus() == ateapipb.Actor_STATUS_PAUSED &&
+		state.Actor.GetLocalSnapshotInfo() != nil &&
+		len(state.Actor.GetLocalSnapshotInfo().GetNodeVmsWithLocalSnapshots()) > 0 {
+		return nil
+	}
+	return status.Errorf(codes.FailedPrecondition, "MarkSuspendingStep prerequisite not met for Actor: %s (got: %v, want %s, or %s with a local snapshot)", input.ActorRef, state.Actor.GetStatus(), ateapipb.Actor_STATUS_RUNNING, ateapipb.Actor_STATUS_PAUSED)
 }
 func (s *MarkSuspendingStep) Execute(ctx context.Context, input *SuspendInput, state *SuspendState) error {
 	state.Actor.Status = ateapipb.Actor_STATUS_SUSPENDING
@@ -139,6 +146,10 @@ func (s *CallAteletSuspendStep) CheckPrerequisite(ctx context.Context, input *Su
 		return status.Errorf(codes.FailedPrecondition, "CallAteletSuspendStep prerequisite not met for Actor: %s (got: %v, want %s)", input.ActorRef, state.Actor.GetStatus(), ateapipb.Actor_STATUS_SUSPENDING)
 	}
 	if state.Actor.GetWorkerAssignment() == nil {
+		// From-pause suspend: no worker, but the local snapshot locates the node to upload from.
+		if state.Actor.GetLocalSnapshotInfo() != nil {
+			return nil
+		}
 		// Missing active worker pod reference in SUSPENDING state indicates corrupted store state.
 		if err := crashActor(ctx, s.store, input.ActorRef, ateattr.OperationSuspend, ateattr.ReasonCorruptedAssignment); err != nil {
 			slog.ErrorContext(ctx, "Failed to crash actor", slog.String("err", err.Error()))
@@ -148,6 +159,9 @@ func (s *CallAteletSuspendStep) CheckPrerequisite(ctx context.Context, input *Su
 	return nil
 }
 func (s *CallAteletSuspendStep) Execute(ctx context.Context, input *SuspendInput, state *SuspendState) error {
+	if state.Actor.GetWorkerAssignment() == nil {
+		return s.uploadPausedCheckpoint(ctx, input, state)
+	}
 	assignment := state.Actor.GetWorkerAssignment()
 	ateletConn, err := s.dialer.DialForWorker(assignment.GetWorkerNamespace(), assignment.GetWorkerPod())
 	if err != nil {
@@ -189,6 +203,41 @@ func (s *CallAteletSuspendStep) Execute(ctx context.Context, input *SuspendInput
 
 	_, err = client.Checkpoint(ctx, req)
 	return maybeCrashActor(ctx, s.store, input.ActorRef, err, "while checkpointing workload", ateattr.OperationSuspend)
+}
+
+// uploadPausedCheckpoint suspends a PAUSED actor without waking it: the atelet
+// on the node pinned by LocalSnapshotInfo uploads the existing local pause
+// snapshot to the in-progress snapshot URI (#791). Re-upload is idempotent.
+func (s *CallAteletSuspendStep) uploadPausedCheckpoint(ctx context.Context, input *SuspendInput, state *SuspendState) error {
+	nodes := state.Actor.GetLocalSnapshotInfo().GetNodeVmsWithLocalSnapshots()
+	if len(nodes) == 0 {
+		return status.Errorf(codes.FailedPrecondition, "actor %s has a local snapshot but no node pin", input.ActorRef)
+	}
+	ateletConn, err := s.dialer.DialForNode(nodes[0])
+	if err != nil {
+		return fmt.Errorf("while getting atelet conn for node %q: %w", nodes[0], err)
+	}
+	client := ateletpb.NewAteomHerderClient(ateletConn)
+
+	req := &ateletpb.UploadCheckpointRequest{
+		Atespace:               state.Actor.GetMetadata().GetAtespace(),
+		ActorName:              state.Actor.GetMetadata().GetName(),
+		ActorUid:               state.Actor.GetMetadata().GetUid(),
+		ActorTemplateNamespace: state.Actor.GetActorTemplateNamespace(),
+		ActorTemplateName:      state.Actor.GetActorTemplateName(),
+		LocalSnapshotPrefix:    state.Actor.GetLocalSnapshotInfo().GetSnapshotPrefix(),
+		SnapshotUriPrefix:      state.Actor.GetInProgressSnapshot(),
+	}
+	_, err = client.UploadCheckpoint(ctx, req)
+	if status.Code(err) == codes.NotFound {
+		// The local snapshot is gone from the node, so there is nothing left to upload or restore.
+		slog.ErrorContext(ctx, "Local pause snapshot missing on node, crashing actor", "node", nodes[0], "snapshot_prefix", req.GetLocalSnapshotPrefix())
+		if cerr := crashActor(ctx, s.store, input.ActorRef, ateattr.OperationSuspend, ateattr.ReasonCorruptedAssignment); cerr != nil {
+			slog.ErrorContext(ctx, "Failed to crash actor", slog.String("err", cerr.Error()))
+		}
+		return fmt.Errorf("actor is CRASHED because its local snapshot is missing on node %q: %w", nodes[0], err)
+	}
+	return maybeCrashActor(ctx, s.store, input.ActorRef, err, "while uploading local checkpoint", ateattr.OperationSuspend)
 }
 
 func (s *CallAteletSuspendStep) RetryBackoff() *wait.Backoff { return nil }
@@ -234,6 +283,10 @@ func (s *FinalizeSuspendedStep) Execute(ctx context.Context, input *SuspendInput
 		return err
 	}
 
+	// SUSPENDING with no assignment is a from-pause suspend: there is no worker
+	// to free, and the uploaded snapshot carries the pause capture's scope.
+	fromPause := latestActor.GetWorkerAssignment() == nil
+
 	// 1. Free the worker (if it hasn't been freed yet)
 	if assignment := latestActor.GetWorkerAssignment(); assignment != nil {
 		workerPod := assignment.GetWorkerPod()
@@ -257,43 +310,48 @@ func (s *FinalizeSuspendedStep) Execute(ctx context.Context, input *SuspendInput
 			}
 		}
 
-		// 2. Clear the actor's assignment, now that the worker is freed
+		// Re-read the actor now that the worker is freed
 		latestActor, err = s.store.GetActor(ctx, input.ActorRef)
 		if err != nil {
 			return err
 		}
-		latestActor.Status = ateapipb.Actor_STATUS_SUSPENDED
-		if latestActor.InProgressSnapshot != "" {
-			location := latestActor.InProgressSnapshot
-			prefix := strings.TrimSuffix(state.ActorTemplate.Spec.SnapshotsConfig.Location, "/") + "/snapshots/"
-			snapshotID := strings.ToLower(strings.NewReplacer(":", "-", "+", "-").Replace(strings.TrimPrefix(location, prefix)))
-			snapshot := &ateapipb.ActorSnapshot{
-				Metadata:               &ateapipb.ResourceMetadata{Atespace: input.ActorRef.Atespace, Name: snapshotID},
-				SourceActor:            input.ActorRef.ToObjectRef(),
-				SourceActorUid:         latestActor.GetMetadata().GetUid(),
-				SourceActorVersion:     state.SourceVersion,
-				ActorTemplateNamespace: latestActor.GetActorTemplateNamespace(),
-				ActorTemplateName:      latestActor.GetActorTemplateName(),
-				ActorTemplateUid:       string(state.ActorTemplate.GetUID()),
-				ContentScope:           toActorSnapshotContentScope(commitSnapshotScope(input.ActorRef.Atespace, state.ActorTemplate)),
-			}
-			if _, err := s.store.CreateActorSnapshot(ctx, snapshot, location); err != nil && !errors.Is(err, store.ErrAlreadyExists) {
-				return err
-			}
-			latestActor.LatestSnapshot = &ateapipb.ObjectRef{Atespace: input.ActorRef.Atespace, Name: snapshotID}
-			latestActor.InProgressSnapshot = ""
-			latestActor.InProgressSnapshotSourceActorVersion = 0
-		}
-		latestActor.WorkerAssignment = nil
-		latestActor.LocalSnapshotInfo = nil
-		updatedActor, err := s.store.UpdateActor(ctx, latestActor, latestActor.GetMetadata().GetVersion())
-		if err != nil {
-			return err
-		}
-		latestActor = updatedActor
 	}
 
-	state.Actor = latestActor
+	// 2. Record the snapshot and clear the actor's assignment and in-progress fields
+	latestActor.Status = ateapipb.Actor_STATUS_SUSPENDED
+	if latestActor.InProgressSnapshot != "" {
+		scope := commitSnapshotScope(input.ActorRef.Atespace, state.ActorTemplate)
+		if fromPause {
+			scope = state.ActorTemplate.Spec.SnapshotsConfig.OnPause
+		}
+		location := latestActor.InProgressSnapshot
+		prefix := strings.TrimSuffix(state.ActorTemplate.Spec.SnapshotsConfig.Location, "/") + "/snapshots/"
+		snapshotID := strings.ToLower(strings.NewReplacer(":", "-", "+", "-").Replace(strings.TrimPrefix(location, prefix)))
+		snapshot := &ateapipb.ActorSnapshot{
+			Metadata:               &ateapipb.ResourceMetadata{Atespace: input.ActorRef.Atespace, Name: snapshotID},
+			SourceActor:            input.ActorRef.ToObjectRef(),
+			SourceActorUid:         latestActor.GetMetadata().GetUid(),
+			SourceActorVersion:     state.SourceVersion,
+			ActorTemplateNamespace: latestActor.GetActorTemplateNamespace(),
+			ActorTemplateName:      latestActor.GetActorTemplateName(),
+			ActorTemplateUid:       string(state.ActorTemplate.GetUID()),
+			ContentScope:           toActorSnapshotContentScope(scope),
+		}
+		if _, err := s.store.CreateActorSnapshot(ctx, snapshot, location); err != nil && !errors.Is(err, store.ErrAlreadyExists) {
+			return err
+		}
+		latestActor.LatestSnapshot = &ateapipb.ObjectRef{Atespace: input.ActorRef.Atespace, Name: snapshotID}
+		latestActor.InProgressSnapshot = ""
+		latestActor.InProgressSnapshotSourceActorVersion = 0
+	}
+	latestActor.WorkerAssignment = nil
+	latestActor.LocalSnapshotInfo = nil
+	updatedActor, err := s.store.UpdateActor(ctx, latestActor, latestActor.GetMetadata().GetVersion())
+	if err != nil {
+		return err
+	}
+
+	state.Actor = updatedActor
 	return nil
 }
 

@@ -201,7 +201,7 @@ func TestBuildDeploymentApplyConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildDeploymentApplyConfig(tt.wp, ateomOTelSettings{})
+			got := buildDeploymentApplyConfig(tt.wp, ateomOTelSettings{}, "")
 			if diff := cmp.Diff(tt.want, got); diff != "" {
 				t.Fatalf("buildDeploymentApplyConfig() mismatch (-want +got):\n%s", diff)
 			}
@@ -226,7 +226,7 @@ func TestMicroVMPodShape(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			wp := testWorkerPoolApplyConfig(nil)
 			wp.Spec.SandboxClass = tt.class
-			ps := buildDeploymentApplyConfig(wp, ateomOTelSettings{}).Spec.Template.Spec
+			ps := buildDeploymentApplyConfig(wp, ateomOTelSettings{}, "").Spec.Template.Spec
 
 			hasVol := false
 			for _, v := range ps.Volumes {
@@ -312,13 +312,44 @@ func TestAteomSecurityContextByClass(t *testing.T) {
 // TestTerminationGracePeriodSeconds asserts the pod's grace period is hardcoded to 3600s.
 func TestTerminationGracePeriodSeconds(t *testing.T) {
 	wp := testWorkerPoolApplyConfig(nil)
-	ps := buildDeploymentApplyConfig(wp, ateomOTelSettings{}).Spec.Template.Spec
+	ps := buildDeploymentApplyConfig(wp, ateomOTelSettings{}, "").Spec.Template.Spec
 	if ps.TerminationGracePeriodSeconds == nil {
 		t.Fatalf("TerminationGracePeriodSeconds not set")
 	}
 	if *ps.TerminationGracePeriodSeconds != 3600 {
 		t.Errorf("TerminationGracePeriodSeconds = %d, want 3600", *ps.TerminationGracePeriodSeconds)
 	}
+}
+
+// TestBuildDeploymentApplyConfigSubstrateVersion asserts the stack version is
+// stamped on the Deployment and pod template labels only when set, and never
+// on the selector.
+func TestBuildDeploymentApplyConfigSubstrateVersion(t *testing.T) {
+	wantSelector := map[string]string{"ate.dev/worker-pool": "pool"}
+
+	t.Run("empty keeps single-stack shape", func(t *testing.T) {
+		d := buildDeploymentApplyConfig(testWorkerPoolApplyConfig(nil), ateomOTelSettings{}, "")
+		if d.Labels != nil {
+			t.Errorf("Deployment labels = %v, want none", d.Labels)
+		}
+		if diff := cmp.Diff(wantSelector, d.Spec.Template.Labels); diff != "" {
+			t.Errorf("pod template labels mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("stamped when set", func(t *testing.T) {
+		d := buildDeploymentApplyConfig(testWorkerPoolApplyConfig(nil), ateomOTelSettings{}, "0.2.0")
+		if diff := cmp.Diff(map[string]string{"substrate-version": "0.2.0"}, d.Labels); diff != "" {
+			t.Errorf("Deployment labels mismatch (-want +got):\n%s", diff)
+		}
+		wantPod := map[string]string{"ate.dev/worker-pool": "pool", "substrate-version": "0.2.0"}
+		if diff := cmp.Diff(wantPod, d.Spec.Template.Labels); diff != "" {
+			t.Errorf("pod template labels mismatch (-want +got):\n%s", diff)
+		}
+		if diff := cmp.Diff(wantSelector, d.Spec.Selector.MatchLabels); diff != "" {
+			t.Errorf("selector matchLabels mismatch (-want +got):\n%s", diff)
+		}
+	})
 }
 
 // TestBuildDeploymentApplyConfigOTelEndpoint asserts the OTLP endpoint and the
@@ -336,7 +367,7 @@ func TestBuildDeploymentApplyConfigOTelEndpoint(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := buildDeploymentApplyConfig(testWorkerPoolApplyConfig(nil), ateomOTelSettings{Endpoint: tt.endpoint}).
+			c := buildDeploymentApplyConfig(testWorkerPoolApplyConfig(nil), ateomOTelSettings{Endpoint: tt.endpoint}, "").
 				Spec.Template.Spec.Containers[0]
 			env := envByName(c.Env)
 
@@ -414,7 +445,7 @@ func TestBuildDeploymentApplyConfigMetricExportTuning(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := buildDeploymentApplyConfig(testWorkerPoolApplyConfig(nil), tt.otel).
+			c := buildDeploymentApplyConfig(testWorkerPoolApplyConfig(nil), tt.otel, "").
 				Spec.Template.Spec.Containers[0]
 			env := envByName(c.Env)
 			for _, k := range []string{"OTEL_METRIC_EXPORT_INTERVAL", "OTEL_METRIC_EXPORT_TIMEOUT"} {
@@ -471,7 +502,7 @@ func TestBuildDeploymentApplyConfigTracesSamplerPropagation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := buildDeploymentApplyConfig(testWorkerPoolApplyConfig(nil), tt.otel).
+			c := buildDeploymentApplyConfig(testWorkerPoolApplyConfig(nil), tt.otel, "").
 				Spec.Template.Spec.Containers[0]
 			env := envByName(c.Env)
 			for _, k := range []string{"OTEL_TRACES_SAMPLER", "OTEL_TRACES_SAMPLER_ARG"} {
