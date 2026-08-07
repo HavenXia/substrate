@@ -29,9 +29,9 @@ import (
 	"github.com/agent-substrate/substrate/cmd/ateapi/internal/store/ateredis"
 	"github.com/agent-substrate/substrate/cmd/ateapi/internal/workercache"
 	"github.com/agent-substrate/substrate/internal/ateinterceptors"
-	"github.com/agent-substrate/substrate/internal/envtestbins"
 	"github.com/agent-substrate/substrate/internal/proto/ateletpb"
 	"github.com/agent-substrate/substrate/internal/resources"
+	"github.com/agent-substrate/substrate/internal/testenv"
 	"github.com/agent-substrate/substrate/internal/volume"
 	atev1alpha1 "github.com/agent-substrate/substrate/pkg/api/v1alpha1"
 	"github.com/agent-substrate/substrate/pkg/client/clientset/versioned"
@@ -61,11 +61,9 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
-	"sigs.k8s.io/controller-runtime/pkg/envtest"
 )
 
 var (
-	testEnv    *envtest.Environment
 	cfg        *rest.Config
 	fakeAtelet = &FakeAteletServer{}
 )
@@ -82,20 +80,8 @@ var (
 )
 
 func TestMain(m *testing.M) {
-	binaryAssetsDirectory, err := envtestbins.BinaryAssetsDir()
-	if err != nil {
-		log.Fatalf("%v", err)
-	}
-
-	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{"../../../../manifests/ate-install/generated"},
-		BinaryAssetsDirectory: binaryAssetsDirectory,
-	}
-
-	cfg, err = testEnv.Start()
-	if err != nil {
-		log.Fatalf("testEnv.Start: %v", err)
-	}
+	var stopEnv func()
+	cfg, stopEnv = testenv.Start()
 
 	// Create ate-system namespace
 	k8sClient, err := kubernetes.NewForConfig(cfg)
@@ -155,10 +141,7 @@ func TestMain(m *testing.M) {
 
 	ateletGrpcServer.Stop()
 
-	err = testEnv.Stop()
-	if err != nil {
-		log.Fatalf("testEnv.Stop: %v", err)
-	}
+	stopEnv()
 
 	os.Exit(code)
 }

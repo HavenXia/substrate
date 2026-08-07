@@ -12,19 +12,73 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package envtestbins resolves the shared envtest (kubebuilder) binary assets
-package envtestbins
+// Package testenv starts the envtest (kubebuilder) control plane shared by
+// the repo's apiserver-backed test packages.
+package testenv
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"testing"
+
+	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/envtest"
 )
 
-// BinaryAssetsDir resolves the envtest (kubebuilder) binary assets directory,
+// kubeVersion pins the envtest control plane to the newest *installed* 1.36
+// patch, downloading one only on a cold cache. Keep the minor in
+// step with k8s.io/* in go.mod.
+const kubeVersion = "1.36.x"
+
+// Start launches a kube-apiserver+etcd pair with the repo CRDs installed and
+// returns a client config plus a stop function. Call it from TestMain.
+//
+// Under -short it exits the test binary with success instead: a cold binary
+// cache needs a download, so `go test -short ./...` always works offline.
+func Start() (*rest.Config, func()) {
+	if !flag.Parsed() {
+		flag.Parse()
+	}
+	if testing.Short() {
+		fmt.Fprintln(os.Stderr, "skipping envtest-backed package in -short mode")
+		os.Exit(0)
+	}
+
+	root, err := repoRoot()
+	if err != nil {
+		fatal(err)
+	}
+	binDir, err := binaryAssetsDir(root)
+	if err != nil {
+		fatal(err)
+	}
+
+	env := &envtest.Environment{
+		CRDDirectoryPaths:     []string{filepath.Join(root, "manifests", "ate-install", "generated")},
+		BinaryAssetsDirectory: binDir,
+	}
+	cfg, err := env.Start()
+	if err != nil {
+		fatal(fmt.Errorf("envtest start: %w", err))
+	}
+	return cfg, func() {
+		if err := env.Stop(); err != nil {
+			fmt.Fprintf(os.Stderr, "envtest stop: %v\n", err)
+		}
+	}
+}
+
+func fatal(err error) {
+	fmt.Fprintf(os.Stderr, "%v\n", err)
+	os.Exit(1)
+}
+
+// binaryAssetsDir resolves the envtest (kubebuilder) binary assets directory,
 // downloading it on first use via `setup-envtest`, and returns its path.
 //
 // The setup is guarded by a cross-process file lock. `go test ./...` runs the
@@ -36,24 +90,20 @@ import (
 // failing with "fork/exec .../etcd: text file busy" or "unable to create file
 // ... from archive". Serializing the first download makes later callers hit a
 // warm cache (a no-op path lookup).
-func BinaryAssetsDir() (string, error) {
-	root, err := repoRoot()
-	if err != nil {
-		return "", err
-	}
-
+func binaryAssetsDir(root string) (string, error) {
 	unlock, err := lockEnvtestSetup()
 	if err != nil {
 		return "", err
 	}
 	defer unlock()
 
-	cmd := exec.Command("bash", filepath.Join(root, "hack", "run-tool.sh"), "setup-envtest", "use", "--print", "path")
+	cmd := exec.Command("bash", filepath.Join(root, "hack", "run-tool.sh"),
+		"setup-envtest", "use", kubeVersion, "--print", "path")
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("setup-envtest: %w (stderr: %s)", err, stderr.String())
+		return "", fmt.Errorf("setup-envtest: %w (stderr: %s) — offline with no cached binaries? `go test -short ./...` skips envtest-backed packages", err, stderr.String())
 	}
 	return strings.TrimSpace(string(out)), nil
 }
@@ -84,10 +134,21 @@ func lockEnvtestSetup() (func(), error) {
 	}, nil
 }
 
+// repoRoot walks up from the CWD (the package directory, under `go test`) to
+// the directory holding go.mod.
 func repoRoot() (string, error) {
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	dir, err := os.Getwd()
 	if err != nil {
-		return "", fmt.Errorf("finding repo root for envtest setup: %w", err)
+		return "", fmt.Errorf("finding repo root: %w", err)
 	}
-	return strings.TrimSpace(string(out)), nil
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("finding repo root: no go.mod above %s", dir)
+		}
+		dir = parent
+	}
 }
