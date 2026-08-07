@@ -15,12 +15,11 @@
 // Package ateredis is an ate storage backend built on Redis.
 //
 // Actors are stored in keys of the form
-// `actor:<atespace>:<name>`.  They are
-// stored as DBActor JSON-serialized objects, which lets us manipulate them from
-// Redis lua.
+// `actor:<atespace>:<name>`, as binary-proto-serialized records (unknown
+// fields survive a read-modify-write, so newer writers stay readable here).
 //
 // Workers are stored in keys of the form
-// `worker:<namespace>:<pool-name>:<pod-name>`, holding a DBWorker JSON object.
+// `worker:<namespace>:<pool-name>:<pod-name>`, also as binary proto.
 //
 // Note that redis lua scripting has a restriction that informed the data design
 // here -- a lua script must predeclare all keys it is going to access.  It
@@ -57,14 +56,13 @@ import (
 	"github.com/agent-substrate/substrate/pkg/proto/ateapipb"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type workerPubSubMsg struct {
 	Type   int    `json:"t"`
-	Worker string `json:"w"` // protojson-encoded Worker
+	Worker []byte `json:"w"` // binary-proto-encoded Worker
 }
 
 type redisClient interface {
@@ -127,12 +125,12 @@ func actorSnapshotTagScanPattern(atespace string) string {
 }
 
 type dbActorSnapshot struct {
-	Snapshot json.RawMessage `json:"snapshot"`
-	Location string          `json:"location"`
+	Snapshot []byte `json:"snapshot"`
+	Location string `json:"location"`
 }
 
 func marshalActorSnapshot(snapshot *ateapipb.ActorSnapshot, location string) ([]byte, error) {
-	b, err := protojson.Marshal(snapshot)
+	b, err := proto.Marshal(snapshot)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +143,7 @@ func unmarshalActorSnapshot(b []byte) (*ateapipb.ActorSnapshot, string, error) {
 		return nil, "", err
 	}
 	snapshot := &ateapipb.ActorSnapshot{}
-	if err := protojson.Unmarshal(record.Snapshot, snapshot); err != nil {
+	if err := proto.Unmarshal(record.Snapshot, snapshot); err != nil {
 		return nil, "", err
 	}
 	return snapshot, record.Location, nil
@@ -162,9 +160,9 @@ func (s *Persistence) CreateAtespace(ctx context.Context, atespace *ateapipb.Ate
 	// Atespace is global-scoped: identity is the name alone (atespace stays empty).
 	dbAtespace.Metadata = newCreateMetadata("", atespace.GetMetadata().GetName())
 
-	dbBytes, err := protojson.Marshal(dbAtespace)
+	dbBytes, err := proto.Marshal(dbAtespace)
 	if err != nil {
-		return nil, fmt.Errorf("in protojson.Marshal: %w", err)
+		return nil, fmt.Errorf("in proto.Marshal: %w", err)
 	}
 	ok, err := s.rdb.SetNX(ctx, dbKey, dbBytes, 0).Result()
 	if err != nil {
@@ -186,7 +184,7 @@ func (s *Persistence) GetAtespace(ctx context.Context, name string) (*ateapipb.A
 		return nil, fmt.Errorf("while getting atespace key %q: %w", dbKey, err)
 	}
 	atespace := &ateapipb.Atespace{}
-	if err := protojson.Unmarshal(dbBytes, atespace); err != nil {
+	if err := proto.Unmarshal(dbBytes, atespace); err != nil {
 		return nil, fmt.Errorf("while unmarshaling atespace: %w", err)
 	}
 	if atespace.GetMetadata().GetName() != name {
@@ -238,8 +236,8 @@ func (s *Persistence) DeleteAtespace(ctx context.Context, name string) (*ateapip
 	}
 
 	deleted := &ateapipb.Atespace{}
-	if err := protojson.Unmarshal(currentVal, deleted); err != nil {
-		return nil, fmt.Errorf("in protojson.Unmarshal: %w", err)
+	if err := proto.Unmarshal(currentVal, deleted); err != nil {
+		return nil, fmt.Errorf("in proto.Unmarshal: %w", err)
 	}
 
 	// Reject a non-empty atespace.
@@ -290,11 +288,11 @@ func workerDBKey(namespace, poolName, podName string) string {
 }
 
 func marshalWorkerEvent(eventType store.WorkerEventType, worker *ateapipb.Worker) (string, error) {
-	workerJSON, err := protojson.Marshal(worker)
+	workerBytes, err := proto.Marshal(worker)
 	if err != nil {
-		return "", fmt.Errorf("in protojson.Marshal: %w", err)
+		return "", fmt.Errorf("in proto.Marshal: %w", err)
 	}
-	msg, err := json.Marshal(workerPubSubMsg{Type: int(eventType), Worker: string(workerJSON)})
+	msg, err := json.Marshal(workerPubSubMsg{Type: int(eventType), Worker: workerBytes})
 	if err != nil {
 		return "", fmt.Errorf("in json.Marshal: %w", err)
 	}
@@ -307,8 +305,8 @@ func unmarshalWorkerEvent(payload string) (store.WorkerEvent, error) {
 		return store.WorkerEvent{}, fmt.Errorf("in json.Unmarshal: %w", err)
 	}
 	worker := &ateapipb.Worker{}
-	if err := protojson.Unmarshal([]byte(msg.Worker), worker); err != nil {
-		return store.WorkerEvent{}, fmt.Errorf("in protojson.Unmarshal: %w", err)
+	if err := proto.Unmarshal(msg.Worker, worker); err != nil {
+		return store.WorkerEvent{}, fmt.Errorf("in proto.Unmarshal: %w", err)
 	}
 	return store.WorkerEvent{Type: store.WorkerEventType(msg.Type), Worker: worker}, nil
 }
@@ -400,7 +398,7 @@ func (s *Persistence) GetActor(ctx context.Context, actorRef resources.ActorRef)
 	}
 
 	actor := &ateapipb.Actor{}
-	if err := protojson.Unmarshal(dbActorBytes, actor); err != nil {
+	if err := proto.Unmarshal(dbActorBytes, actor); err != nil {
 		return nil, fmt.Errorf("while unmarshaling actor: %w", err)
 	}
 
@@ -419,9 +417,9 @@ func (s *Persistence) CreateActor(ctx context.Context, actor *ateapipb.Actor) (*
 	dbActor := proto.Clone(actor).(*ateapipb.Actor)
 	dbActor.Metadata = newCreateMetadata(actor.GetMetadata().GetAtespace(), actor.GetMetadata().GetName())
 
-	dbActorBytes, err := protojson.Marshal(dbActor)
+	dbActorBytes, err := proto.Marshal(dbActor)
 	if err != nil {
-		return nil, fmt.Errorf("in protojson.Marshal: %w", err)
+		return nil, fmt.Errorf("in proto.Marshal: %w", err)
 	}
 
 	ok, err := s.rdb.SetNX(ctx, dbKey, dbActorBytes, 0).Result()
@@ -478,7 +476,7 @@ func (s *Persistence) GetActorSnapshotByTag(ctx context.Context, atespace, name 
 		return nil, "", nil, fmt.Errorf("while resolving actor snapshot tag %s/%s: %w", atespace, name, err)
 	}
 	tag := &ateapipb.ActorSnapshotTag{}
-	if err := protojson.Unmarshal(b, tag); err != nil {
+	if err := proto.Unmarshal(b, tag); err != nil {
 		return nil, "", nil, fmt.Errorf("while unmarshaling actor snapshot tag %s/%s: %w", atespace, name, err)
 	}
 	snapshot, location, err := s.GetActorSnapshot(ctx, tag.GetSnapshot().GetAtespace(), tag.GetSnapshot().GetName())
@@ -528,7 +526,7 @@ func (s *Persistence) TagActorSnapshot(ctx context.Context, atespace, name strin
 	dbTag := proto.Clone(tag).(*ateapipb.ActorSnapshotTag)
 	dbTag.Metadata = newCreateMetadata(tag.GetMetadata().GetAtespace(), tag.GetMetadata().GetName())
 	dbTag.Snapshot = &ateapipb.ObjectRef{Atespace: atespace, Name: name}
-	b, err := protojson.Marshal(dbTag)
+	b, err := proto.Marshal(dbTag)
 	if err != nil {
 		return nil, fmt.Errorf("while marshaling actor snapshot tag: %w", err)
 	}
@@ -543,7 +541,7 @@ func (s *Persistence) TagActorSnapshot(ctx context.Context, atespace, name strin
 			return nil, fmt.Errorf("while getting actor snapshot tag: %w", err)
 		}
 		existingTag := &ateapipb.ActorSnapshotTag{}
-		if err := protojson.Unmarshal(existing, existingTag); err != nil {
+		if err := proto.Unmarshal(existing, existingTag); err != nil {
 			return nil, fmt.Errorf("while unmarshaling actor snapshot tag: %w", err)
 		}
 		if existingTag.GetSnapshot().GetAtespace() != atespace || existingTag.GetSnapshot().GetName() != name || existingTag.GetScope() != tag.GetScope() {
@@ -566,7 +564,7 @@ func (s *Persistence) UpdateActorSnapshotTag(ctx context.Context, atespace, name
 			return err
 		}
 		tag := &ateapipb.ActorSnapshotTag{}
-		if err := protojson.Unmarshal(b, tag); err != nil {
+		if err := proto.Unmarshal(b, tag); err != nil {
 			return fmt.Errorf("while unmarshaling actor snapshot tag %s/%s: %w", atespace, name, err)
 		}
 		if tag.GetMetadata().GetVersion() != expectedVersion {
@@ -578,7 +576,7 @@ func (s *Persistence) UpdateActorSnapshotTag(ctx context.Context, atespace, name
 		}
 		tag.Scope = scope
 		tag.Metadata = newUpdateMetadata(tag.GetMetadata())
-		b, err = protojson.Marshal(tag)
+		b, err = proto.Marshal(tag)
 		if err != nil {
 			return fmt.Errorf("while marshaling actor snapshot tag: %w", err)
 		}
@@ -622,9 +620,9 @@ func (s *Persistence) CreateWorker(ctx context.Context, worker *ateapipb.Worker)
 	dbWorker := proto.Clone(worker).(*ateapipb.Worker)
 	dbWorker.Version = 1
 
-	dbWorkerBytes, err := protojson.Marshal(dbWorker)
+	dbWorkerBytes, err := proto.Marshal(dbWorker)
 	if err != nil {
-		return fmt.Errorf("in protojson.Marshal: %w", err)
+		return fmt.Errorf("in proto.Marshal: %w", err)
 	}
 
 	ok, err := s.rdb.SetNX(ctx, dbKey, dbWorkerBytes, 0).Result()
@@ -651,8 +649,8 @@ func (s *Persistence) GetWorker(ctx context.Context, namespace, pool, pod string
 	}
 
 	worker := &ateapipb.Worker{}
-	if err := protojson.Unmarshal(dbWorkerBytes, worker); err != nil {
-		return nil, fmt.Errorf("in protojson.Unmarshal: %w", err)
+	if err := proto.Unmarshal(dbWorkerBytes, worker); err != nil {
+		return nil, fmt.Errorf("in proto.Unmarshal: %w", err)
 	}
 
 	if worker.GetWorkerNamespace() != namespace || worker.GetWorkerPool() != pool || worker.GetWorkerPod() != pod {
@@ -679,8 +677,8 @@ func (s *Persistence) UpdateWorker(ctx context.Context, worker *ateapipb.Worker,
 		}
 
 		currentWorker := &ateapipb.Worker{}
-		if err := protojson.Unmarshal(currentVal, currentWorker); err != nil {
-			return fmt.Errorf("in protojson.Unmarshal: %w", err)
+		if err := proto.Unmarshal(currentVal, currentWorker); err != nil {
+			return fmt.Errorf("in proto.Unmarshal: %w", err)
 		}
 
 		if currentWorker.GetVersion() != expectedVersion {
@@ -700,9 +698,9 @@ func (s *Persistence) UpdateWorker(ctx context.Context, worker *ateapipb.Worker,
 			return fmt.Errorf("ip is immutable")
 		}
 
-		newVal, err := protojson.Marshal(dbWorker)
+		newVal, err := proto.Marshal(dbWorker)
 		if err != nil {
-			return fmt.Errorf("in protojson.Marshal: %w", err)
+			return fmt.Errorf("in proto.Marshal: %w", err)
 		}
 
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
@@ -751,8 +749,8 @@ func (s *Persistence) DeleteActor(ctx context.Context, actorRef resources.ActorR
 		}
 
 		currentActor := &ateapipb.Actor{}
-		if err := protojson.Unmarshal(currentVal, currentActor); err != nil {
-			return fmt.Errorf("in protojson.Unmarshal: %w", err)
+		if err := proto.Unmarshal(currentVal, currentActor); err != nil {
+			return fmt.Errorf("in proto.Unmarshal: %w", err)
 		}
 
 		if currentActor.GetStatus() != ateapipb.Actor_STATUS_DELETING {
@@ -796,8 +794,8 @@ func (s *Persistence) UpdateActor(ctx context.Context, actor *ateapipb.Actor, ex
 		}
 
 		currentActor := &ateapipb.Actor{}
-		if err := protojson.Unmarshal(currentVal, currentActor); err != nil {
-			return fmt.Errorf("in protojson.Unmarshal: %w", err)
+		if err := proto.Unmarshal(currentVal, currentActor); err != nil {
+			return fmt.Errorf("in proto.Unmarshal: %w", err)
 		}
 
 		if currentActor.GetMetadata().GetVersion() != expectedVersion {
@@ -818,9 +816,9 @@ func (s *Persistence) UpdateActor(ctx context.Context, actor *ateapipb.Actor, ex
 		// The stored metadata is authoritative; derive the next metadata from it.
 		dbActor.Metadata = newUpdateMetadata(currentActor.GetMetadata())
 
-		newVal, err := protojson.Marshal(dbActor)
+		newVal, err := proto.Marshal(dbActor)
 		if err != nil {
-			return fmt.Errorf("in protojson.Marshal: %w", err)
+			return fmt.Errorf("in proto.Marshal: %w", err)
 		}
 
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
@@ -1021,8 +1019,8 @@ func fetchProtos[M proto.Message](ctx context.Context, master *redis.Client, key
 		}
 
 		msg := newMsg()
-		if err := protojson.Unmarshal([]byte(getCmd.Val()), msg); err != nil {
-			return nil, fmt.Errorf("in protojson.Unmarshal: %w", err)
+		if err := proto.Unmarshal([]byte(getCmd.Val()), msg); err != nil {
+			return nil, fmt.Errorf("in proto.Unmarshal: %w", err)
 		}
 		out = append(out, msg)
 	}

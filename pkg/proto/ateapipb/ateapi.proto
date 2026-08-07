@@ -218,6 +218,10 @@ message WorkerAssignment {
 
   // worker_pod_ip is the IP of worker_pod.
   string worker_pod_ip = 5;
+
+  // substrate_version is the substrate-version label of the worker's stack,
+  // stamped at assignment.
+  string substrate_version = 6;
 }
 
 // ActorSnapshot is an independently addressable durable Actor snapshot. Its

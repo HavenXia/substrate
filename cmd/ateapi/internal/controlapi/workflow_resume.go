@@ -409,11 +409,12 @@ func (s *AssignWorkerStep) Execute(ctx context.Context, input *ResumeInput, stat
 
 func workerAssignmentFrom(w *ateapipb.Worker) *ateapipb.WorkerAssignment {
 	return &ateapipb.WorkerAssignment{
-		WorkerNamespace: w.GetWorkerNamespace(),
-		WorkerPool:      w.GetWorkerPool(),
-		WorkerPod:       w.GetWorkerPod(),
-		WorkerPodUid:    w.GetWorkerPodUid(),
-		WorkerPodIp:     w.GetIp(),
+		WorkerNamespace:  w.GetWorkerNamespace(),
+		WorkerPool:       w.GetWorkerPool(),
+		WorkerPod:        w.GetWorkerPod(),
+		WorkerPodUid:     w.GetWorkerPodUid(),
+		WorkerPodIp:      w.GetIp(),
+		SubstrateVersion: w.GetLabels()["substrate-version"],
 	}
 }
 
