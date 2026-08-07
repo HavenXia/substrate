@@ -24,6 +24,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/agent-substrate/substrate/pkg/proto/ateapipb"
 	appsv1 "k8s.io/api/apps/v1"
@@ -225,6 +226,31 @@ func (r *reconciler) flipDispatcherRules(ctx context.Context) error {
 	}
 	_, err = r.k8s.CoreV1().ConfigMaps(ateSystemNS).Patch(ctx, "ate-dispatcher-rules", types.MergePatchType, patch, metav1.PatchOptions{})
 	return err
+}
+
+// bounceDispatcher restarts the dispatcher pod so it mounts the freshly
+// patched rules ConfigMap immediately. Without this the kubelet volume sync
+// (~1min) leaves a window where the dispatcher still routes passthrough; run 1
+// lost a resume into it. A real implementation would watch the ConfigMap via
+// the API instead of a file (census carve-out).
+func (r *reconciler) bounceDispatcher(ctx context.Context) error {
+	if err := r.k8s.CoreV1().Pods(ateSystemNS).DeleteCollection(ctx, metav1.DeleteOptions{},
+		metav1.ListOptions{LabelSelector: "app=ate-dispatcher"}); err != nil {
+		return fmt.Errorf("deleting dispatcher pod: %w", err)
+	}
+	deadline := time.Now().Add(90 * time.Second)
+	for time.Now().Before(deadline) {
+		pods, err := r.k8s.CoreV1().Pods(ateSystemNS).List(ctx, metav1.ListOptions{LabelSelector: "app=ate-dispatcher"})
+		if err == nil {
+			for i := range pods.Items {
+				if pods.Items[i].DeletionTimestamp == nil && podReady(&pods.Items[i]) {
+					return nil
+				}
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("dispatcher not ready %s after rules bounce", "90s")
 }
 
 // repointTemplates flips every ActorTemplate workerSelector pinned to the old

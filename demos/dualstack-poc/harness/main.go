@@ -139,6 +139,11 @@ func retryable(err error) bool {
 		return true
 	case codes.FailedPrecondition:
 		return strings.Contains(strings.ToLower(s.Message()), "no free workers")
+	case codes.Internal:
+		// A resume that raced the dispatcher rules propagation can land on the
+		// old api, whose fenced informer cannot see the claimed new-stack pod;
+		// the RESUMING recovery path completes it on retry.
+		return strings.Contains(strings.ToLower(s.Message()), "worker pod not found")
 	}
 	return false
 }

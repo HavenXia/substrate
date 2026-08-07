@@ -233,6 +233,9 @@ func (r *reconciler) step(ctx context.Context, u *unstructured.Unstructured, s c
 		if err := r.flipDispatcherRules(ctx); err != nil {
 			return s.Phase, "", fmt.Errorf("patching dispatcher rules: %w", err)
 		}
+		if err := r.bounceDispatcher(ctx); err != nil {
+			return s.Phase, "", fmt.Errorf("bouncing dispatcher for fresh rules: %w", err)
+		}
 		flipped, err := r.repointTemplates(ctx, old, newV)
 		if err != nil {
 			return s.Phase, "", fmt.Errorf("repointing templates: %w", err)
