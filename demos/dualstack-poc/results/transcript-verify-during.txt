@@ -1,0 +1,12 @@
+01:36:56.453 harness phase=verify-during atespace=poc stories=all
+01:36:56.453 story-a: traffic running; waiting for drain-ready (operator SIGTERM), seeded count=3
+01:37:02.038 traffic story-a: gap begins: POST story-a: status 503: actor poc/story-a unavailable
+01:37:11.769 traffic story-a: recovered after 15.3s gap (count=4)
+01:37:11.769 PASS story-a: reported ready_for_suspend after SIGTERM (count=4)
+01:37:11.769 story-a: suspending (harness owns the suspend)
+01:37:12.497 story-a: SUSPENDED; resuming (post-flip this must land on green)
+01:37:13.255 PASS story-a: RUNNING on substrate_version=0.2.0 (worker counter-0-2-0-7d87845dc-69xw2)
+01:37:13.821 PASS story-a: count continued across suspend/resume: 4 -> 5
+01:37:14.377 PASS story-a: count monotonic after resume: 5 -> 6
+01:37:14.943 story-a: post-resume ready_for_suspend=true (true corroborates restored memory)
+01:37:14.944 RESULT: all assertions passed

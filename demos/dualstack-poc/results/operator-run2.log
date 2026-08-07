@@ -1,0 +1,12 @@
+time=2026-08-07T01:34:02.910-07:00 level=INFO msg="dual-live operator started" interval=2s
+time=2026-08-07T01:34:07.473-07:00 level=INFO msg="phase transition" from=Pending to=Installing msg="installing 0.1.0"
+time=2026-08-07T01:34:53.519-07:00 level=ERROR msg="phase step failed; will retry" phase=Installing err="door check: rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 34.118.229.58:443: connect: connection refused\""
+time=2026-08-07T01:35:05.518-07:00 level=INFO msg="phase transition" from=Installing to=Ready msg="installed 0.1.0; door serving (2 actors)"
+time=2026-08-07T01:35:59.392-07:00 level=INFO msg="phase transition" from=Ready to=GreenUp msg="upgrading 0.1.0 -> 0.2.0"
+time=2026-08-07T01:36:21.380-07:00 level=INFO msg="phase transition" from=GreenUp to=CommitPaused msg="green stack up; preflight via door: 6 actors, 8 workers readable"
+time=2026-08-07T01:36:26.156-07:00 level=INFO msg="phase transition" from=CommitPaused to=Flip msg="no paused actors remain"
+time=2026-08-07T01:36:35.470-07:00 level=INFO msg="phase transition" from=Flip to=Migrate msg="door+rules flipped, 2 templates repointed; grace 90s"
+E0807 01:36:39.892753   81998 portforward.go:522] "Unhandled Error" err="an error occurred forwarding 49210 -> 443: error forwarding port 443 to pod 893fa7c7e85905ab51a3a0f1efa97df85d597d9e75c7854791febc5f718d7736, uid : network namespace for sandbox \"893fa7c7e85905ab51a3a0f1efa97df85d597d9e75c7854791febc5f718d7736\" is closed" logger="UnhandledError"
+time=2026-08-07T01:36:39.893-07:00 level=ERROR msg="phase step failed; will retry" phase=Migrate err="rpc error: code = Unavailable desc = connection error: desc = \"transport: authentication handshake failed: EOF\""
+time=2026-08-07T01:38:09.663-07:00 level=INFO msg="phase transition" from=Migrate to=Teardown msg="no actors left on the old stack"
+time=2026-08-07T01:38:13.483-07:00 level=INFO msg="phase transition" from=Teardown to=Ready msg="upgrade to 0.2.0 complete: 1 killed, 1 committed"

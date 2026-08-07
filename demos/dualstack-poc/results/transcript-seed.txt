@@ -1,0 +1,8 @@
+01:35:41.675 harness phase=seed atespace=poc stories=all
+01:35:42.004 atespace "poc" ready
+01:35:43.450 PASS story-a: seeded RUNNING (cooperative), count=1
+01:35:44.738 PASS story-d: seeded RUNNING (stubborn), count=1
+01:35:47.550 PASS story-c: seeded SUSPENDED at count=3 (normal blue suspend)
+01:35:50.122 PASS story-e: seeded PAUSED at count=3
+01:35:50.122 story-a: left RUNNING with traffic seen up to count=3
+01:35:50.123 RESULT: all assertions passed

@@ -1,0 +1,14 @@
+01:38:39.238 harness phase=verify-after atespace=poc stories=all
+01:38:39.239 story-b: creating a fresh actor post-upgrade
+01:38:40.889 PASS story-b: fresh actor serving, count=1
+01:38:40.955 PASS story-b: RUNNING on substrate_version=0.2.0 (worker counter-0-2-0-7d87845dc-2j9t4)
+01:38:40.955 story-c: traffic-wake: POSTing through the router until the parked request lands (seeded count=3)
+01:38:42.038 PASS story-c: count preserved across the upgrade: 3 -> 4
+01:38:42.628 PASS story-c: count continues: 4 -> 5
+01:38:42.693 PASS story-c: RUNNING on substrate_version=0.2.0 (worker counter-0-2-0-7d87845dc-4z28v)
+01:38:42.756 story-e: status before resume: STATUS_SUSPENDED (seeded count=3)
+01:38:43.906 PASS story-e: count preserved across pause-commit-resume: 3 -> 4
+01:38:43.971 PASS story-e: RUNNING on substrate_version=0.2.0 (worker counter-0-2-0-7d87845dc-wbwtf)
+01:38:44.034 PASS story-d: stubborn actor is CRASHED; not resuming it
+01:38:44.100 PASS story-d: no workers left with substrate-version=0.1.0
+01:38:44.100 RESULT: all assertions passed
