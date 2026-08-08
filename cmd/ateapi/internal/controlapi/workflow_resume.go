@@ -552,6 +552,10 @@ func schedulingConstraints(actor *ateapipb.Actor, tmpl *atev1alpha1.ActorTemplat
 		ActorSelector: labels.SelectorFromSet(labels.Set(actor.GetWorkerSelector().GetMatchLabels())),
 		RequiredNodes: actor.GetLocalSnapshotInfo().GetNodeVmsWithLocalSnapshots(),
 	}
+	// Paused actor should only be resumed on nodes it was paused
+	if len(c.RequiredNodes) > 0 {
+		return c, nil
+	}
 	if tmpl.Spec.WorkerSelector != nil {
 		sel, err := metav1.LabelSelectorAsSelector(tmpl.Spec.WorkerSelector)
 		if err != nil {
