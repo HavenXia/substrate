@@ -79,6 +79,16 @@ go run ./tools/setup-gcp create cluster [flags]
 | `--subnetwork` | VPC subnetwork name. | `SUBNETWORK` | `default` |
 | `--machine-type` | Machine type for the gVisor node pool. | `GVISOR_NODE_MACHINE_TYPE` | `c3-standard-4` |
 
+**Node version labels:** `setup-gcp` does not set the `ate.dev/substrate-version`
+node label that the versioned dataplane (atelet DaemonSet, ateom worker pods)
+schedules on. `hack/install-ate.sh` labels the cluster's existing unlabeled
+nodes at install time; nodes that join afterwards (autoscaling, additional node
+pools) come up unlabeled and run no dataplane pods until labeled. Create
+additional pools with
+`gcloud container node-pools create ... --node-labels=ate.dev/substrate-version=<build version>`
+(the same pattern as the `ate.dev/sandboxClass` microvm pools), or label the
+nodes with `kubectl` after they join.
+
 ### 3. Create Bucket
 
 Creates a GCS bucket for storing snapshots.

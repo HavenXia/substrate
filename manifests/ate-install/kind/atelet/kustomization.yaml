@@ -18,12 +18,15 @@ kind: Kustomization
 resources:
   - ../../atelet.yaml
 
+# The patch keys on the literal ${SUBSTRATE_VERSION_SUFFIX} placeholder name:
+# hack/install-ate.sh substitutes the version placeholders on the kustomize
+# output, so at build time the base resource still carries it verbatim.
 patches:
   - patch: |-
       apiVersion: apps/v1
       kind: DaemonSet
       metadata:
-        name: atelet
+        name: atelet-${SUBSTRATE_VERSION_SUFFIX}
         namespace: ate-system
       spec:
         template:

@@ -78,26 +78,51 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ---
 # 4. Create DaemonSet
+#
+# The DaemonSet is keyed by substrate build version. hack/install-ate.sh
+# substitutes the placeholders after every kustomize/ko render
+# (substitute_version): ${SUBSTRATE_VERSION} is the label-safe build version
+# (must agree with internal/versionlabel.Value) and ${SUBSTRATE_VERSION_SUFFIX}
+# is its DNS-safe object-name form. Applying this file without that
+# substitution fails on the invalid name — deploy through the script.
+#
+# During a rolling upgrade (kubectl ate upgrade) two versioned atelet
+# DaemonSets coexist: each schedules only to nodes carrying its own
+# ate.dev/substrate-version label, and the driver flips that label one node at
+# a time to move nodes between them. The disjoint nodeSelectors are
+# load-bearing, not cosmetic: atelet binds hostPorts 8085/9090, so two atelet
+# pods can never share a node. The ServiceAccount and RBAC above are
+# version-independent and shared by all versions.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: atelet
+  name: atelet-${SUBSTRATE_VERSION_SUFFIX}
   namespace: ate-system
   labels:
     app: atelet
+    ate.dev/substrate-version: "${SUBSTRATE_VERSION}"
 spec:
   selector:
+    # The version label in the selector keeps coexisting versioned DaemonSets
+    # from ever adopting each other's pods (selectors are immutable, so this
+    # requires a fresh install of pre-versioning clusters — alpha-acceptable).
     matchLabels:
       app: atelet
+      ate.dev/substrate-version: "${SUBSTRATE_VERSION}"
   template:
     metadata:
       labels:
         app: atelet
+        ate.dev/substrate-version: "${SUBSTRATE_VERSION}"
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "9090"
     spec:
       serviceAccountName: atelet
+      # Pin to nodes at this build version. install-ate.sh labels unlabeled
+      # nodes at install time; the upgrade driver owns the label afterwards.
+      nodeSelector:
+        ate.dev/substrate-version: "${SUBSTRATE_VERSION}"
       # Budget for the full shutdown sequence: --drain-delay (0 for atelet) +
       # --drain-timeout (5m). Sized long because Checkpoint/Restore stream
       # multi-GiB snapshots and must not be force-cancelled mid-upload. The sum
