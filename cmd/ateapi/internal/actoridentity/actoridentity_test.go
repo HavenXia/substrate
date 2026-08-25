@@ -679,6 +679,16 @@ func TestMintCertAuthorization(t *testing.T) {
 			if got := status.Code(err); got != tc.wantCode {
 				t.Fatalf("MintCert() code = %v (err = %v), want %v", got, err, tc.wantCode)
 			}
+			if tc.wantCode == codes.PermissionDenied {
+				// Denials are deliberately indistinguishable (see denyMint): the
+				// message must not vary with why the mint was refused, or a
+				// caller could probe workers it is not entitled to.
+				msg := status.Convert(err).Message()
+				if msg != "caller is not permitted to mint actor credentials" &&
+					msg != "caller is not permitted to mint credentials for this actor" {
+					t.Errorf("MintCert() denial leaks its reason: %q", msg)
+				}
+			}
 			if tc.wantCode != codes.OK {
 				if resp != nil {
 					t.Errorf("MintCert() returned a response alongside an error")
