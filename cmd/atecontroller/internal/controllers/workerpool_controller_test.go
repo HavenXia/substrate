@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,6 +38,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -44,6 +46,7 @@ import (
 
 	"github.com/agent-substrate/substrate/internal/ateattr"
 	"github.com/agent-substrate/substrate/internal/testenv"
+	"github.com/agent-substrate/substrate/internal/versionlabel"
 	atev1alpha1 "github.com/agent-substrate/substrate/pkg/api/v1alpha1"
 )
 
@@ -78,8 +81,9 @@ func TestMain(m *testing.M) {
 	}
 
 	if err := (&WorkerPoolReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		BuildVersion: testBuildVersion,
 	}).SetupWithManager(mgr); err != nil {
 		fmt.Fprintf(os.Stderr, "controller setup failed: %v\n", err)
 		os.Exit(1)
@@ -326,7 +330,8 @@ func TestStatusReplicasPropagation(t *testing.T) {
 		if err := k8sClient.Get(ctx, types.NamespacedName{Name: wp.Name, Namespace: wp.Namespace}, current); err != nil {
 			return false, nil
 		}
-		if current.Status.Selector != "ate.dev/worker-pool="+wp.Name {
+		wantSelector := versionlabel.Key + "=" + testBuildVersion + ",ate.dev/worker-pool=" + wp.Name
+		if current.Status.Selector != wantSelector {
 			return false, nil
 		}
 		return current.Status.Replicas == 3, nil
@@ -460,12 +465,14 @@ func TestWorkerPoolPodTemplateClear(t *testing.T) {
 		current.Spec.Template.NodeSelector = nil
 	})
 
+	// Only the controller-injected version entry remains.
 	eventually(t, func(ctx context.Context) (bool, error) {
 		dep, err := getDeployment(ctx, wp)
 		if err != nil {
 			return false, nil
 		}
-		return len(dep.Spec.Template.Spec.NodeSelector) == 0, nil
+		return len(dep.Spec.Template.Spec.NodeSelector) == 1 &&
+			dep.Spec.Template.Spec.NodeSelector[versionlabel.Key] == testBuildVersion, nil
 	})
 }
 
@@ -507,7 +514,9 @@ func TestWorkerPoolPodTemplateClearAll(t *testing.T) {
 		}
 		podSpec := dep.Spec.Template.Spec
 		container := podSpec.Containers[0]
-		return len(podSpec.NodeSelector) == 0 &&
+		// The controller-injected version entry survives the template clear.
+		return len(podSpec.NodeSelector) == 1 &&
+			podSpec.NodeSelector[versionlabel.Key] == testBuildVersion &&
 			len(podSpec.Tolerations) == 0 &&
 			podSpec.PriorityClassName == "" &&
 			(podSpec.Affinity == nil || podSpec.Affinity.NodeAffinity == nil) &&
@@ -588,10 +597,12 @@ func deleteOnCleanup(t *testing.T, obj client.Object) {
 	})
 }
 
+// getDeployment fetches the pool's own-version worker set (the only one the
+// controller under test writes).
 func getDeployment(ctx context.Context, wp *atev1alpha1.WorkerPool) (*appsv1.Deployment, error) {
 	dep := &appsv1.Deployment{}
 	err := k8sClient.Get(ctx, types.NamespacedName{
-		Name:      wp.Name,
+		Name:      workerSetName(wp.Name, testBuildVersion),
 		Namespace: wp.Namespace,
 	}, dep)
 	return dep, err
@@ -730,5 +741,163 @@ func TestWorkerPoolMetrics(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("observed %v, want %v", got, want)
+	}
+}
+
+// newForeignWorkerSet builds a minimal valid Deployment owned by wp, standing
+// in for a worker set rendered by a controller at another version — or, with
+// no extra labels, a pre-versioning brownfield set named exactly after the
+// pool.
+func newForeignWorkerSet(wp *atev1alpha1.WorkerPool, name string, extraLabels map[string]string) *appsv1.Deployment {
+	labels := map[string]string{"ate.dev/worker-pool": wp.Name}
+	for k, v := range extraLabels {
+		labels[k] = v
+	}
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: wp.Namespace,
+			Labels:    labels,
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion:         atev1alpha1.GroupVersion.String(),
+				Kind:               "WorkerPool",
+				Name:               wp.Name,
+				UID:                wp.UID,
+				Controller:         ptr.To(true),
+				BlockOwnerDeletion: ptr.To(true),
+			}},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: ptr.To(int32(1)),
+			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "ateom", Image: "ateom:old"}},
+				},
+			},
+		},
+	}
+}
+
+// TestVersionedWorkerSetShape verifies the worker set is keyed to the
+// controller's build version end to end: Deployment name suffix, version
+// label on the Deployment, selector, and pod template, and the pod
+// nodeSelector requiring the node version label. No Deployment appears at
+// the bare pool name.
+func TestVersionedWorkerSetShape(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	wp := makeWorkerPool("test-version-keys", "default", 1, "ateom:v1")
+	if err := k8sClient.Create(ctx, wp); err != nil {
+		t.Fatalf("create WorkerPool: %v", err)
+	}
+	deleteOnCleanup(t, wp)
+
+	eventually(t, func(ctx context.Context) (bool, error) {
+		dep, err := getDeployment(ctx, wp)
+		if err != nil {
+			return false, nil
+		}
+		return dep.Name == wp.Name+"-v1-2-3-test" &&
+			dep.Labels[versionlabel.Key] == testBuildVersion &&
+			dep.Spec.Selector.MatchLabels[versionlabel.Key] == testBuildVersion &&
+			dep.Spec.Selector.MatchLabels["ate.dev/worker-pool"] == wp.Name &&
+			dep.Spec.Template.Labels[versionlabel.Key] == testBuildVersion &&
+			dep.Spec.Template.Spec.NodeSelector[versionlabel.Key] == testBuildVersion, nil
+	})
+
+	err := k8sClient.Get(ctx, types.NamespacedName{Name: wp.Name, Namespace: wp.Namespace}, &appsv1.Deployment{})
+	if !k8errors.IsNotFound(err) {
+		t.Errorf("expected no Deployment at the bare pool name, got err=%v", err)
+	}
+}
+
+// TestHandsOffForeignVersionSets verifies the hands-off invariant: sets owned
+// by the pool but keyed to another version — and a pre-versioning set with no
+// version label at all — are never written, while a WorkerPool edit still
+// lands on the controller's own-version set.
+func TestHandsOffForeignVersionSets(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	wp := makeWorkerPool("test-hands-off", "default", 2, "ateom:v1")
+	if err := k8sClient.Create(ctx, wp); err != nil {
+		t.Fatalf("create WorkerPool: %v", err)
+	}
+	deleteOnCleanup(t, wp)
+
+	eventually(t, func(ctx context.Context) (bool, error) {
+		_, err := getDeployment(ctx, wp)
+		return err == nil, nil
+	})
+
+	foreign := newForeignWorkerSet(wp, wp.Name+"-v0-0-9", map[string]string{versionlabel.Key: "v0.0.9"})
+	unversioned := newForeignWorkerSet(wp, wp.Name, nil)
+	before := map[string]string{}
+	for _, dep := range []*appsv1.Deployment{foreign, unversioned} {
+		if err := k8sClient.Create(ctx, dep); err != nil {
+			t.Fatalf("create Deployment %s: %v", dep.Name, err)
+		}
+		deleteOnCleanup(t, dep)
+		before[dep.Name] = dep.ResourceVersion
+	}
+
+	// The edit (and the Owns() events from the creates above) trigger
+	// reconciles; only the own-version set may change.
+	updateWorkerPoolSpec(t, ctx, wp, "update WorkerPool replicas", func(current *atev1alpha1.WorkerPool) {
+		current.Spec.Replicas = 5
+	})
+	eventually(t, func(ctx context.Context) (bool, error) {
+		dep, err := getDeployment(ctx, wp)
+		return err == nil && dep.Spec.Replicas != nil && *dep.Spec.Replicas == 5, nil
+	})
+
+	for _, dep := range []*appsv1.Deployment{foreign, unversioned} {
+		got := &appsv1.Deployment{}
+		if err := k8sClient.Get(ctx, types.NamespacedName{Name: dep.Name, Namespace: dep.Namespace}, got); err != nil {
+			t.Fatalf("get Deployment %s: %v", dep.Name, err)
+		}
+		if got.ResourceVersion != before[dep.Name] {
+			t.Errorf("Deployment %s was written: resourceVersion %s -> %s", dep.Name, before[dep.Name], got.ResourceVersion)
+		}
+		if got.Spec.Replicas == nil || *got.Spec.Replicas != 1 {
+			t.Errorf("Deployment %s replicas = %v, want untouched 1", dep.Name, got.Spec.Replicas)
+		}
+	}
+}
+
+// TestReconcileRefusesForeignSetAtOwnName verifies the write guard: sanitized
+// name suffixes can collide across versions, so a Deployment sitting at this
+// controller's own set name with a different (or missing) version label makes
+// the reconcile fail instead of being adopted.
+func TestReconcileRefusesForeignSetAtOwnName(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		labels map[string]string
+	}{
+		{"foreign version label", map[string]string{versionlabel.Key: "v9.9.9"}},
+		{"missing version label", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+			utilruntime.Must(atev1alpha1.AddToScheme(scheme))
+			wp := makeWorkerPool("pool", "default", 1, "ateom:v1")
+			wp.UID = "uid"
+			squatter := newForeignWorkerSet(wp, workerSetName(wp.Name, testBuildVersion), tt.labels)
+			r := &WorkerPoolReconciler{
+				Client:       fake.NewClientBuilder().WithScheme(scheme).WithObjects(wp, squatter).Build(),
+				Scheme:       scheme,
+				BuildVersion: testBuildVersion,
+			}
+			_, err := r.Reconcile(context.Background(), ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: wp.Name, Namespace: wp.Namespace},
+			})
+			if err == nil || !strings.Contains(err.Error(), "refusing to write") {
+				t.Fatalf("Reconcile() error = %v, want refusing-to-write error", err)
+			}
+		})
 	}
 }

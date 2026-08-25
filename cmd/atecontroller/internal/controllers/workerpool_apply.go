@@ -24,8 +24,15 @@ import (
 	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 
 	"github.com/agent-substrate/substrate/internal/ateompath"
+	"github.com/agent-substrate/substrate/internal/versionlabel"
 	atev1alpha1 "github.com/agent-substrate/substrate/pkg/api/v1alpha1"
 )
+
+// workerSetName returns the version-keyed Deployment name of a pool's worker
+// set under a controller build version.
+func workerSetName(poolName, buildVersion string) string {
+	return poolName + "-" + versionlabel.NameSuffix(buildVersion)
+}
 
 // ateomOTelResourceAttributes mirrors atelet.yaml; service.instance.id is the pod
 // uid so each worker pod is a distinct telemetry source.
@@ -69,16 +76,19 @@ const (
 )
 
 // buildDeploymentApplyConfig constructs the SSA apply configuration for the
-// Deployment managed by a WorkerPool. Only fields owned by this controller
-// are declared here. otel, when it carries an endpoint, is propagated to the
-// ateom container so it pushes telemetry to that collector. An unset
-// spec.workerImage resolves to the versioned default for the pool's sandbox
-// class.
-func buildDeploymentApplyConfig(wp *atev1alpha1.WorkerPool, otel ateomOTelSettings) (*appsv1ac.DeploymentApplyConfiguration, error) {
-	image, err := resolveWorkerImage(wp)
+// worker set a WorkerPool runs at buildVersion: a Deployment keyed to that
+// version by name, by the ate.dev/substrate-version label (also in the
+// selector and pod template), and by a pod nodeSelector requiring the same
+// label on nodes. Only fields owned by this controller are declared here.
+// otel, when it carries an endpoint, is propagated to the ateom container so
+// it pushes telemetry to that collector. An unset spec.workerImage resolves
+// to the versioned default for the pool's sandbox class.
+func buildDeploymentApplyConfig(wp *atev1alpha1.WorkerPool, buildVersion string, otel ateomOTelSettings) (*appsv1ac.DeploymentApplyConfiguration, error) {
+	image, err := resolveWorkerImage(wp, buildVersion)
 	if err != nil {
 		return nil, err
 	}
+	versionValue := versionlabel.Value(buildVersion)
 
 	labels := map[string]string{}
 	annotations := map[string]string{}
@@ -91,6 +101,7 @@ func buildDeploymentApplyConfig(wp *atev1alpha1.WorkerPool, otel ateomOTelSettin
 		}
 	}
 	labels["ate.dev/worker-pool"] = wp.Name
+	labels[versionlabel.Key] = versionValue
 
 	containerAC := corev1ac.Container().
 		WithName("ateom").
@@ -184,7 +195,14 @@ func buildDeploymentApplyConfig(wp *atev1alpha1.WorkerPool, otel ateomOTelSettin
 	podSpecAC.WithContainers(containerAC)
 	podSpecAC.WithTerminationGracePeriodSeconds(workerTerminationGracePeriodSeconds)
 
-	return appsv1ac.Deployment(wp.Name, wp.Namespace).
+	// Version-keyed placement: pods only schedule onto nodes that has same
+	// version label with this set's version.
+	if podSpecAC.NodeSelector == nil {
+		podSpecAC.NodeSelector = map[string]string{}
+	}
+	podSpecAC.NodeSelector[versionlabel.Key] = versionValue
+
+	return appsv1ac.Deployment(workerSetName(wp.Name, buildVersion), wp.Namespace).
 		WithLabels(labels).
 		WithAnnotations(annotations).
 		WithOwnerReferences(metav1ac.OwnerReference().
@@ -197,7 +215,10 @@ func buildDeploymentApplyConfig(wp *atev1alpha1.WorkerPool, otel ateomOTelSettin
 		WithSpec(appsv1ac.DeploymentSpec().
 			WithReplicas(wp.Spec.Replicas).
 			WithSelector(metav1ac.LabelSelector().
-				WithMatchLabels(map[string]string{"ate.dev/worker-pool": wp.Name})).
+				WithMatchLabels(map[string]string{
+					"ate.dev/worker-pool": wp.Name,
+					versionlabel.Key:      versionValue,
+				})).
 			WithTemplate(corev1ac.PodTemplateSpec().
 				WithLabels(labels).
 				WithAnnotations(annotations).

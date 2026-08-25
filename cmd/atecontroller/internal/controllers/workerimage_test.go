@@ -20,7 +20,6 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/agent-substrate/substrate/internal/version"
 	atev1alpha1 "github.com/agent-substrate/substrate/pkg/api/v1alpha1"
 )
 
@@ -147,16 +146,16 @@ func TestBuildDeploymentApplyConfigWorkerImage(t *testing.T) {
 		{
 			name:  "default for gvisor",
 			class: atev1alpha1.SandboxClassGvisor,
-			want:  defaultWorkerImageRepo + "/ateom-gvisor:" + imageTag(version.Version),
+			want:  defaultWorkerImageRepo + "/ateom-gvisor:" + imageTag(testBuildVersion),
 		},
 		{
 			name:  "default for microvm",
 			class: atev1alpha1.SandboxClassMicroVM,
-			want:  defaultWorkerImageRepo + "/ateom-microvm:" + imageTag(version.Version),
+			want:  defaultWorkerImageRepo + "/ateom-microvm:" + imageTag(testBuildVersion),
 		},
 		{
 			name: "default for empty class is gvisor",
-			want: defaultWorkerImageRepo + "/ateom-gvisor:" + imageTag(version.Version),
+			want: defaultWorkerImageRepo + "/ateom-gvisor:" + imageTag(testBuildVersion),
 		},
 		{
 			name:    "unknown class errors",
@@ -174,7 +173,7 @@ func TestBuildDeploymentApplyConfigWorkerImage(t *testing.T) {
 					SandboxClass: tt.class,
 				},
 			}
-			dep, err := buildDeploymentApplyConfig(wp, ateomOTelSettings{})
+			dep, err := buildDeploymentApplyConfig(wp, testBuildVersion, ateomOTelSettings{})
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("buildDeploymentApplyConfig() succeeded, want error for unknown sandbox class")

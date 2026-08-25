@@ -22,6 +22,7 @@ import (
 	"github.com/agent-substrate/substrate/cmd/atecontroller/internal/workersync"
 	"github.com/agent-substrate/substrate/internal/ateapiauth"
 	"github.com/agent-substrate/substrate/internal/serverboot"
+	"github.com/agent-substrate/substrate/internal/version"
 	clientv1alpha1 "github.com/agent-substrate/substrate/pkg/api/v1alpha1"
 	"github.com/agent-substrate/substrate/pkg/client/clientset/versioned"
 	"github.com/agent-substrate/substrate/pkg/client/informers/externalversions"
@@ -178,6 +179,7 @@ func main() {
 	if err = (&controllers.WorkerPoolReconciler{
 		Client:                   mgr.GetClient(),
 		Scheme:                   mgr.GetScheme(),
+		BuildVersion:             version.Version,
 		OTelEndpoint:             *otelEndpoint,
 		OTelMetricExportInterval: *otelMetricExportInterval,
 		OTelMetricExportTimeout:  *otelMetricExportTimeout,

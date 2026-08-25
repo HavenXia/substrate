@@ -17,7 +17,6 @@ package controllers
 import (
 	"fmt"
 
-	"github.com/agent-substrate/substrate/internal/version"
 	atev1alpha1 "github.com/agent-substrate/substrate/pkg/api/v1alpha1"
 )
 
@@ -37,12 +36,12 @@ var defaultWorkerImageNames = map[atev1alpha1.SandboxClass]string{
 
 // resolveWorkerImage returns the worker image for a pool: spec.workerImage
 // when set, otherwise the compiled-in default for the pool's sandbox class
-// tagged with this controller's own build version.
-func resolveWorkerImage(wp *atev1alpha1.WorkerPool) (string, error) {
+// tagged with buildVersion.
+func resolveWorkerImage(wp *atev1alpha1.WorkerPool, buildVersion string) (string, error) {
 	if wp.Spec.WorkerImage != "" {
 		return wp.Spec.WorkerImage, nil
 	}
-	return defaultWorkerImage(wp.Spec.SandboxClass, version.Version)
+	return defaultWorkerImage(wp.Spec.SandboxClass, buildVersion)
 }
 
 func defaultWorkerImage(class atev1alpha1.SandboxClass, buildVersion string) (string, error) {

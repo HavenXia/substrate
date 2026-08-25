@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/agent-substrate/substrate/internal/ateattr"
+	"github.com/agent-substrate/substrate/internal/versionlabel"
 	atev1alpha1 "github.com/agent-substrate/substrate/pkg/api/v1alpha1"
 )
 
@@ -38,7 +39,9 @@ const workerPoolFieldOwner = "workerpool-controller"
 
 type WorkerPoolReconciler struct {
 	client.Client
-	Scheme       *runtime.Scheme
+	Scheme *runtime.Scheme
+	// BuildVersion keys the worker set this controller owns.
+	BuildVersion string
 	OTelEndpoint string
 	// OTelMetricExportInterval is the OTEL_METRIC_EXPORT_INTERVAL propagated to
 	// ateom pods. Empty keeps the SDK's default.
@@ -98,8 +101,10 @@ func (r *WorkerPoolReconciler) reconcileWorkerPool(ctx context.Context, wp *atev
 		return err
 	}
 
+	// Status reflects only this controller's own-version set; sets left over
+	// from other versions are invisible here by design.
 	dep := &appsv1.Deployment{}
-	if err := r.Get(ctx, types.NamespacedName{Name: wp.Name, Namespace: wp.Namespace}, dep); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: workerSetName(wp.Name, r.BuildVersion), Namespace: wp.Namespace}, dep); err != nil {
 		if k8errors.IsNotFound(err) {
 			return nil
 		}
@@ -110,7 +115,23 @@ func (r *WorkerPoolReconciler) reconcileWorkerPool(ctx context.Context, wp *atev
 }
 
 func (r *WorkerPoolReconciler) applyDeployment(ctx context.Context, wp *atev1alpha1.WorkerPool) error {
-	depAC, err := buildDeploymentApplyConfig(wp, ateomOTelSettings{
+	// This controller only ever writes the set keyed to its own build version.
+	name := workerSetName(wp.Name, r.BuildVersion)
+	existing := &appsv1.Deployment{}
+	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: wp.Namespace}, existing)
+	versionValue := versionlabel.Value(r.BuildVersion)
+	switch {
+	case k8errors.IsNotFound(err):
+	case err != nil:
+		return fmt.Errorf("failed to get Deployment %q: %w", name, err)
+	// an exsting worker set that is not created by this controller
+
+	case existing.Labels[versionlabel.Key] != versionValue:
+		return fmt.Errorf("refusing to write Deployment %q: version label %q is not this controller's %q",
+			name, existing.Labels[versionlabel.Key], versionValue)
+	}
+
+	depAC, err := buildDeploymentApplyConfig(wp, r.BuildVersion, ateomOTelSettings{
 		Endpoint:             r.OTelEndpoint,
 		MetricExportInterval: r.OTelMetricExportInterval,
 		MetricExportTimeout:  r.OTelMetricExportTimeout,
@@ -201,6 +222,9 @@ func (r *WorkerPoolReconciler) InitMetrics(meter metric.Meter) error {
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *WorkerPoolReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if r.BuildVersion == "" {
+		return fmt.Errorf("WorkerPoolReconciler.BuildVersion must be set")
+	}
 	if err := r.InitMetrics(otel.Meter("atecontroller")); err != nil {
 		return fmt.Errorf("failed to initialize workerpool metrics: %w", err)
 	}

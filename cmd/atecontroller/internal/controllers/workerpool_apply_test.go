@@ -27,8 +27,13 @@ import (
 	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 
 	"github.com/agent-substrate/substrate/internal/ateompath"
+	"github.com/agent-substrate/substrate/internal/versionlabel"
 	atev1alpha1 "github.com/agent-substrate/substrate/pkg/api/v1alpha1"
 )
+
+// testBuildVersion is the controller build version tests render sets under.
+// Its label value is itself; its name suffix is "v1-2-3-test".
+const testBuildVersion = "v1.2.3-test"
 
 func TestBuildDeploymentApplyConfig(t *testing.T) {
 	requiredNodeAffinity := &corev1.NodeAffinity{
@@ -227,6 +232,7 @@ func TestBuildDeploymentApplyConfigMetadata(t *testing.T) {
 		"project":             "agent-substrate",
 		"team":                "compute",
 		"ate.dev/worker-pool": wp.Name,
+		versionlabel.Key:      testBuildVersion,
 	}
 	wantAnnotations := map[string]string{
 		"policy.example.com/exemption": "sandbox-host",
@@ -712,9 +718,74 @@ func TestGPUMicroVMPoolHasNoGPUPodShape(t *testing.T) {
 	}
 }
 
+// TestBuildDeploymentApplyConfigVersionKeying asserts the worker set is keyed
+// to the build version everywhere the rolling-upgrade flow depends on it:
+// Deployment name suffix, version label on the Deployment, selector, and pod
+// template, and a pod nodeSelector requiring the node version label — merged
+// with, not overwriting, the template and sandbox-class nodeSelectors.
+func TestBuildDeploymentApplyConfigVersionKeying(t *testing.T) {
+	tests := []struct {
+		name             string
+		class            atev1alpha1.SandboxClass
+		tmpl             *atev1alpha1.WorkerPoolPodTemplate
+		wantNodeSelector map[string]string
+	}{
+		{
+			name:             "plain pool",
+			wantNodeSelector: map[string]string{versionlabel.Key: testBuildVersion},
+		},
+		{
+			name: "template nodeSelector merged",
+			tmpl: &atev1alpha1.WorkerPoolPodTemplate{
+				NodeSelector: map[string]string{"accelerator": "gpu"},
+			},
+			wantNodeSelector: map[string]string{
+				"accelerator":    "gpu",
+				versionlabel.Key: testBuildVersion,
+			},
+		},
+		{
+			name:  "microvm class nodeSelector merged",
+			class: atev1alpha1.SandboxClassMicroVM,
+			wantNodeSelector: map[string]string{
+				"ate.dev/sandboxClass": string(atev1alpha1.SandboxClassMicroVM),
+				versionlabel.Key:       testBuildVersion,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wp := testWorkerPoolApplyConfig(tt.tmpl)
+			wp.Spec.SandboxClass = tt.class
+			got := mustBuildDeploymentApplyConfig(t, wp, ateomOTelSettings{})
+
+			wantName := wp.Name + "-v1-2-3-test"
+			if got.Name == nil || *got.Name != wantName {
+				t.Errorf("Deployment name = %v, want %q", got.Name, wantName)
+			}
+			wantLabels := map[string]string{
+				"ate.dev/worker-pool": wp.Name,
+				versionlabel.Key:      testBuildVersion,
+			}
+			if diff := cmp.Diff(wantLabels, got.Labels); diff != "" {
+				t.Errorf("Deployment labels mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(wantLabels, got.Spec.Selector.MatchLabels); diff != "" {
+				t.Errorf("selector matchLabels mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(wantLabels, got.Spec.Template.Labels); diff != "" {
+				t.Errorf("pod-template labels mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(tt.wantNodeSelector, got.Spec.Template.Spec.NodeSelector); diff != "" {
+				t.Errorf("pod nodeSelector mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func mustBuildDeploymentApplyConfig(t *testing.T, wp *atev1alpha1.WorkerPool, otel ateomOTelSettings) *appsv1ac.DeploymentApplyConfiguration {
 	t.Helper()
-	dep, err := buildDeploymentApplyConfig(wp, otel)
+	dep, err := buildDeploymentApplyConfig(wp, testBuildVersion, otel)
 	if err != nil {
 		t.Fatalf("buildDeploymentApplyConfig() failed: %v", err)
 	}
@@ -835,7 +906,7 @@ func expectedDeploymentApplyConfig(mutatePodSpec func(*corev1ac.PodSpecApplyConf
 			).
 			WithResources(corev1ac.ResourceRequirements()))
 
-	podSpecAC.NodeSelector = map[string]string{}
+	podSpecAC.NodeSelector = map[string]string{versionlabel.Key: testBuildVersion}
 	podSpecAC.Tolerations = []corev1ac.TolerationApplyConfiguration{}
 	podSpecAC.WithPriorityClassName("")
 	podSpecAC.WithAffinity(corev1ac.Affinity())
@@ -844,8 +915,12 @@ func expectedDeploymentApplyConfig(mutatePodSpec func(*corev1ac.PodSpecApplyConf
 		mutatePodSpec(podSpecAC)
 	}
 
-	return appsv1ac.Deployment(wp.Name, wp.Namespace).
-		WithLabels(map[string]string{"ate.dev/worker-pool": wp.Name}).
+	wantLabels := map[string]string{
+		"ate.dev/worker-pool": wp.Name,
+		versionlabel.Key:      testBuildVersion,
+	}
+	return appsv1ac.Deployment(workerSetName(wp.Name, testBuildVersion), wp.Namespace).
+		WithLabels(wantLabels).
 		WithOwnerReferences(metav1ac.OwnerReference().
 			WithAPIVersion(atev1alpha1.GroupVersion.String()).
 			WithKind("WorkerPool").
@@ -856,8 +931,8 @@ func expectedDeploymentApplyConfig(mutatePodSpec func(*corev1ac.PodSpecApplyConf
 		WithSpec(appsv1ac.DeploymentSpec().
 			WithReplicas(wp.Spec.Replicas).
 			WithSelector(metav1ac.LabelSelector().
-				WithMatchLabels(map[string]string{"ate.dev/worker-pool": wp.Name})).
+				WithMatchLabels(wantLabels)).
 			WithTemplate(corev1ac.PodTemplateSpec().
-				WithLabels(map[string]string{"ate.dev/worker-pool": wp.Name}).
+				WithLabels(wantLabels).
 				WithSpec(podSpecAC)))
 }
