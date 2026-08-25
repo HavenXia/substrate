@@ -71,14 +71,14 @@ type upgradeKube interface {
 	// ListAteletPods returns atelet pods, restricted to one node when node is
 	// non-empty.
 	ListAteletPods(ctx context.Context, node string) ([]corev1.Pod, error)
+	// ListAteletDaemonSets returns the atelet DaemonSets, labeled and
+	// unlabeled alike.
+	ListAteletDaemonSets(ctx context.Context) ([]appsv1.DaemonSet, error)
 	DeletePod(ctx context.Context, namespace, name string) error
 	// ListWorkerDeployments returns Deployments carrying the worker-pool label
 	// across all namespaces.
 	ListWorkerDeployments(ctx context.Context) ([]appsv1.Deployment, error)
 	DeleteDeployment(ctx context.Context, namespace, name string) error
-	// ListAteletDaemonSets returns the atelet DaemonSets, labeled and
-	// unlabeled alike.
-	ListAteletDaemonSets(ctx context.Context) ([]appsv1.DaemonSet, error)
 	DeleteDaemonSet(ctx context.Context, namespace, name string) error
 }
 
@@ -135,6 +135,14 @@ func (c *kubeUpgradeClient) ListAteletPods(ctx context.Context, node string) ([]
 	return list.Items, nil
 }
 
+func (c *kubeUpgradeClient) ListAteletDaemonSets(ctx context.Context) ([]appsv1.DaemonSet, error) {
+	list, err := c.clientset.AppsV1().DaemonSets(ateSystemNamespace).List(ctx, metav1.ListOptions{LabelSelector: ateletPodSelector})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list atelet daemonsets: %w", err)
+	}
+	return list.Items, nil
+}
+
 func (c *kubeUpgradeClient) DeletePod(ctx context.Context, namespace, name string) error {
 	return c.clientset.CoreV1().Pods(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 }
@@ -149,14 +157,6 @@ func (c *kubeUpgradeClient) ListWorkerDeployments(ctx context.Context) ([]appsv1
 
 func (c *kubeUpgradeClient) DeleteDeployment(ctx context.Context, namespace, name string) error {
 	return c.clientset.AppsV1().Deployments(namespace).Delete(ctx, name, metav1.DeleteOptions{})
-}
-
-func (c *kubeUpgradeClient) ListAteletDaemonSets(ctx context.Context) ([]appsv1.DaemonSet, error) {
-	list, err := c.clientset.AppsV1().DaemonSets(ateSystemNamespace).List(ctx, metav1.ListOptions{LabelSelector: ateletPodSelector})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list atelet daemonsets: %w", err)
-	}
-	return list.Items, nil
 }
 
 func (c *kubeUpgradeClient) DeleteDaemonSet(ctx context.Context, namespace, name string) error {
@@ -239,12 +239,20 @@ func podsAtVersion(pods []corev1.Pod, target string) []corev1.Pod {
 // status.worker_assignment.worker.name against Worker.metadata.name from
 // ListWorkers (WorkerAssignment itself has no node_name). Workers on the node
 // that report a bound actor the actor list missed (pagination races) block too.
-func blockingActorsOnNode(actors []*ateapipb.Actor, workers []*ateapipb.Worker, node string) []string {
+//
+// A non-nil onlyPods set ("namespace/name") restricts the worker-bound checks
+// to workers backing those pods; the PAUSED local-snapshot check is always
+// node-scoped.
+func blockingActorsOnNode(actors []*ateapipb.Actor, workers []*ateapipb.Worker, node string, onlyPods map[string]bool) []string {
 	nodeWorkers := make(map[string]*ateapipb.Worker)
 	for _, w := range workers {
-		if w.GetNodeName() == node {
-			nodeWorkers[w.GetMetadata().GetName()] = w
+		if w.GetNodeName() != node {
+			continue
 		}
+		if onlyPods != nil && !onlyPods[w.GetWorkerNamespace()+"/"+w.GetWorkerPod()] {
+			continue
+		}
+		nodeWorkers[w.GetMetadata().GetName()] = w
 	}
 
 	blocking := make(map[string]string) // atespace/name -> description

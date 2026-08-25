@@ -43,9 +43,9 @@ var upgradeRunCmd = &cobra.Command{
 	Short: "Roll nodes to a target substrate version, one node at a time",
 	Long: `Rolls each substrate node to the target version: drains the node's workers,
 waits until no RUNNING or PAUSED actor occupies the node (actors leave at
-their own pace; nothing is force-suspended), deletes the emptied old-version
-worker pods, flips the node's ` + versionlabel.Key + ` label, and waits for
-the node's atelet and target-version worker pods to be Ready.
+their own pace; nothing is force-suspended), flips the node's
+` + versionlabel.Key + ` label, deletes the emptied old-version worker pods,
+and waits for the node's atelet and target-version worker pods to be Ready.
 
 The command is idempotent: every step derives its state from the cluster, so
 rerunning skips nodes that are already done.`,
@@ -126,6 +126,23 @@ func (r *UpgradeRollRunner) Run(ctx context.Context) error {
 		return fmt.Errorf("--target-version is required")
 	}
 	target := versionlabel.Value(r.targetVersion)
+
+	// The label flip removes a node's old atelet, so without the target
+	// version's DaemonSet staged the converted node ends up ateletless. Verify
+	// before touching any node.
+	dss, err := r.kube.ListAteletDaemonSets(ctx)
+	if err != nil {
+		return err
+	}
+	hasTarget := false
+	for i := range dss {
+		if dss[i].Labels[versionlabel.Key] == target {
+			hasTarget = true
+		}
+	}
+	if !hasTarget {
+		return fmt.Errorf("no atelet DaemonSet labeled %s=%s: apply the target release's manifests first, then rerun", versionlabel.Key, target)
+	}
 
 	nodes, err := r.selectNodes(ctx)
 	if err != nil {
@@ -221,11 +238,24 @@ func (r *UpgradeRollRunner) rollNode(ctx context.Context, i, n int, node corev1.
 		}
 	}
 
-	if err := r.waitNodeEmpty(ctx, node.Name); err != nil {
+	if err := r.waitNodeEmpty(ctx, node.Name, target); err != nil {
 		return err
 	}
 
-	// Re-list: pods may have terminated while we waited.
+	// Flip the label before deleting: the old set's ReplicaSet replaces every
+	// deleted pod immediately, and on a still-old-labeled node the scheduler
+	// could seat that undrained replacement right back here. Flipped first,
+	// replacements stay Pending (the rollback spring).
+	if current != target {
+		fmt.Fprintf(r.out, "  labeling node %s %s=%s\n", node.Name, versionlabel.Key, target)
+		if err := r.kube.PatchNodeLabel(ctx, node.Name, versionlabel.Key, target); err != nil {
+			return err
+		}
+	}
+
+	// The delete is still needed after the flip: a label change never evicts
+	// running pods (node affinity is scheduling-time only). Re-list: pods may
+	// have terminated while we waited.
 	pods, err = r.kube.ListWorkerPods(ctx, node.Name)
 	if err != nil {
 		return err
@@ -237,14 +267,22 @@ func (r *UpgradeRollRunner) rollNode(ctx context.Context, i, n int, node corev1.
 		}
 	}
 
-	if current != target {
-		fmt.Fprintf(r.out, "  labeling node %s %s=%s\n", node.Name, versionlabel.Key, target)
-		if err := r.kube.PatchNodeLabel(ctx, node.Name, versionlabel.Key, target); err != nil {
-			return err
+	return r.waitNodeReady(ctx, node.Name, target)
+}
+
+// unscheduledTargetPodsExist reports whether any target-version worker pod is
+// still waiting for a node.
+func (r *UpgradeRollRunner) unscheduledTargetPodsExist(ctx context.Context, target string) (bool, error) {
+	pods, err := r.kube.ListWorkerPods(ctx, "")
+	if err != nil {
+		return false, err
+	}
+	for _, pod := range podsAtVersion(pods, target) {
+		if pod.Spec.NodeName == "" && pod.DeletionTimestamp == nil {
+			return true, nil
 		}
 	}
-
-	return r.waitNodeReady(ctx, node.Name, target)
+	return false, nil
 }
 
 // drainNodeWorkers marks the workers backing the given pods as draining so
@@ -278,13 +316,25 @@ func (r *UpgradeRollRunner) drainNodeWorkers(ctx context.Context, node string, o
 }
 
 // waitNodeEmpty polls until no RUNNING or PAUSED actor occupies the node.
-// Purely passive: actors leave at the user's pace.
-func (r *UpgradeRollRunner) waitNodeEmpty(ctx context.Context, node string) error {
+// Purely passive: actors leave at the user's pace. Worker-bound actors block
+// only when their worker backs a non-target-version pod (those are the pods
+// about to be deleted); actors on target-version workers keep serving and
+// must not stall a rerun over a partially rolled node. PAUSED local-snapshot
+// blocking stays node-scoped.
+func (r *UpgradeRollRunner) waitNodeEmpty(ctx context.Context, node, target string) error {
 	var deadline time.Time
 	if r.drainTimeout > 0 {
 		deadline = time.Now().Add(r.drainTimeout)
 	}
 	for {
+		pods, err := r.kube.ListWorkerPods(ctx, node)
+		if err != nil {
+			return err
+		}
+		oldPodKeys := make(map[string]bool)
+		for _, pod := range podsNotAtVersion(pods, target) {
+			oldPodKeys[pod.Namespace+"/"+pod.Name] = true
+		}
 		actors, err := listAllActors(ctx, r.api)
 		if err != nil {
 			return err
@@ -293,7 +343,7 @@ func (r *UpgradeRollRunner) waitNodeEmpty(ctx context.Context, node string) erro
 		if err != nil {
 			return err
 		}
-		blocking := blockingActorsOnNode(actors, workers, node)
+		blocking := blockingActorsOnNode(actors, workers, node, oldPodKeys)
 		if len(blocking) == 0 {
 			fmt.Fprintf(r.out, "  node %s has no running or paused actors\n", node)
 			return nil
@@ -308,11 +358,20 @@ func (r *UpgradeRollRunner) waitNodeEmpty(ctx context.Context, node string) erro
 	}
 }
 
-// waitNodeReady polls until the node's atelet pod and the target-version
-// worker pods scheduled to the node are Ready. If no target-version worker pod
-// has been scheduled to the node by the deadline (e.g. the pools' replicas are
-// seated on other nodes), it warns and proceeds; pods that are present but not
-// Ready at the deadline are an error.
+// waitNodeReady polls until the node's atelet pod is Ready, the
+// target-version worker pods scheduled to the node are Ready, and no
+// target-version pod is still queued unscheduled cluster-wide. The roll owes
+// capacity, not this node's capacity: replacements for displaced workers may
+// legitimately seat on earlier-converted nodes, and then this node is done
+// the moment its atelet is — waiting a full timeout here for pods that
+// already live elsewhere would only stall the roll. The cluster-wide queue
+// check is what keeps a rollback over a damaged fleet honest: emptied nodes
+// have nothing local to wait for, but the old version's Pending pods are
+// exactly the capacity the rollback exists to restore. Absences resolve at
+// the deadline as warn-and-continue — queued pods that never seat (capacity
+// shortfall) or no atelet pod at all (the DaemonSet may be unable to
+// schedule to this node, e.g. taints) — but pods that are present and not
+// Ready are an error.
 func (r *UpgradeRollRunner) waitNodeReady(ctx context.Context, node, target string) error {
 	deadline := time.Now().Add(r.readyTimeout)
 	for {
@@ -334,13 +393,27 @@ func (r *UpgradeRollRunner) waitNodeReady(ctx context.Context, node, target stri
 			}
 		}
 
-		if ateletOK && len(targetPods) > 0 && ready == len(targetPods) {
-			fmt.Fprintf(r.out, "  node %s ready: atelet Ready, %d/%d worker pod(s) Ready at %s\n", node, ready, len(targetPods), target)
-			return nil
+		if ateletOK && ready == len(targetPods) {
+			queued, err := r.unscheduledTargetPodsExist(ctx, target)
+			if err != nil {
+				return err
+			}
+			if !queued {
+				if len(targetPods) > 0 {
+					fmt.Fprintf(r.out, "  node %s ready: atelet Ready, %d/%d worker pod(s) Ready at %s\n", node, ready, len(targetPods), target)
+				} else {
+					fmt.Fprintf(r.out, "  node %s ready: atelet Ready; all %s capacity is seated elsewhere\n", node, target)
+				}
+				return nil
+			}
 		}
 		if time.Now().After(deadline) {
-			if ateletOK && len(targetPods) == 0 {
-				fmt.Fprintf(r.out, "  WARNING: no %s worker pods scheduled to node %s after %s (pools may be seated elsewhere); continuing\n", target, node, r.readyTimeout)
+			if len(ateletPods) == 0 {
+				fmt.Fprintf(r.out, "  WARNING: no atelet pod on node %s after %s (the atelet DaemonSet may be unable to schedule here); continuing\n", node, r.readyTimeout)
+				ateletOK = true
+			}
+			if ateletOK && ready == len(targetPods) {
+				fmt.Fprintf(r.out, "  WARNING: %s worker pods are still unscheduled after %s (not enough labeled capacity yet?); continuing\n", target, r.readyTimeout)
 				return nil
 			}
 			return fmt.Errorf("not ready after %s: atelet ready=%t, %d/%d worker pod(s) ready; rerun to keep waiting", r.readyTimeout, ateletOK, ready, len(targetPods))
@@ -353,12 +426,13 @@ func (r *UpgradeRollRunner) waitNodeReady(ctx context.Context, node, target stri
 }
 
 // ateletReady reports whether the node has a Ready atelet pod at the target
-// version. Versioned atelet DaemonSets label their pods; an unlabeled pod
-// belongs to a pre-versioning install and counts too.
+// version. Versioned atelet DaemonSets label their pods; unlabeled pods
+// belong to pre-versioning installs, which the roll does not support
+// (their DaemonSet's immutable selector cannot gain the version key, so
+// those clusters take a fresh install instead).
 func ateletReady(pods []corev1.Pod, target string) bool {
 	for i := range pods {
-		v := podVersion(&pods[i])
-		if (v == "" || v == target) && isPodReady(&pods[i]) {
+		if podVersion(&pods[i]) == target && isPodReady(&pods[i]) {
 			return true
 		}
 	}

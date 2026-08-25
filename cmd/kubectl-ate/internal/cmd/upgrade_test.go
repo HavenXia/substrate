@@ -77,6 +77,7 @@ type mockUpgradeKube struct {
 	deletedPods        []string // "ns/name"
 	deletedDeployments []string // "ns/name"
 	deletedDaemonSets  []string // "ns/name"
+	ops                []string // interleaved "patch:node" / "delete:ns/name", in call order
 }
 
 func (m *mockUpgradeKube) ListNodes(ctx context.Context) ([]corev1.Node, error) {
@@ -85,6 +86,7 @@ func (m *mockUpgradeKube) ListNodes(ctx context.Context) ([]corev1.Node, error) 
 
 func (m *mockUpgradeKube) PatchNodeLabel(ctx context.Context, nodeName, key, value string) error {
 	m.patchedLabels = append(m.patchedLabels, fmt.Sprintf("%s:%s=%s", nodeName, key, value))
+	m.ops = append(m.ops, "patch:"+nodeName)
 	for i := range m.nodes {
 		if m.nodes[i].Name == nodeName {
 			if m.nodes[i].Labels == nil {
@@ -117,8 +119,13 @@ func (m *mockUpgradeKube) ListAteletPods(ctx context.Context, node string) ([]co
 	return filterPodsByNode(m.ateletPods, node), nil
 }
 
+func (m *mockUpgradeKube) ListAteletDaemonSets(ctx context.Context) ([]appsv1.DaemonSet, error) {
+	return append([]appsv1.DaemonSet(nil), m.ateletDaemonSets...), nil
+}
+
 func (m *mockUpgradeKube) DeletePod(ctx context.Context, namespace, name string) error {
 	m.deletedPods = append(m.deletedPods, namespace+"/"+name)
+	m.ops = append(m.ops, "delete:"+namespace+"/"+name)
 	for i := range m.workerPods {
 		if m.workerPods[i].Namespace == namespace && m.workerPods[i].Name == name {
 			m.workerPods = append(m.workerPods[:i], m.workerPods[i+1:]...)
@@ -135,10 +142,6 @@ func (m *mockUpgradeKube) ListWorkerDeployments(ctx context.Context) ([]appsv1.D
 func (m *mockUpgradeKube) DeleteDeployment(ctx context.Context, namespace, name string) error {
 	m.deletedDeployments = append(m.deletedDeployments, namespace+"/"+name)
 	return nil
-}
-
-func (m *mockUpgradeKube) ListAteletDaemonSets(ctx context.Context) ([]appsv1.DaemonSet, error) {
-	return append([]appsv1.DaemonSet(nil), m.ateletDaemonSets...), nil
 }
 
 func (m *mockUpgradeKube) DeleteDaemonSet(ctx context.Context, namespace, name string) error {
@@ -173,7 +176,9 @@ func testWorkerPod(namespace, name, node, version string, ready bool) corev1.Pod
 	return pod
 }
 
-func testAteletPod(name, node string, ready bool) corev1.Pod {
+// testAteletPod builds an atelet pod; an empty version leaves it unlabeled,
+// like a pre-versioning install.
+func testAteletPod(name, node, version string, ready bool) corev1.Pod {
 	pod := corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: ateSystemNamespace,
@@ -183,10 +188,29 @@ func testAteletPod(name, node string, ready bool) corev1.Pod {
 		Spec:   corev1.PodSpec{NodeName: node},
 		Status: corev1.PodStatus{Phase: corev1.PodRunning},
 	}
+	if version != "" {
+		pod.Labels[versionlabel.Key] = version
+	}
 	if ready {
 		pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
 	}
 	return pod
+}
+
+// testAteletDSs builds one atelet DaemonSet per version; "" builds an
+// unlabeled pre-versioning one.
+func testAteletDSs(versions ...string) []appsv1.DaemonSet {
+	out := make([]appsv1.DaemonSet, 0, len(versions))
+	for _, v := range versions {
+		labels := map[string]string{"app": "atelet"}
+		name := "atelet"
+		if v != "" {
+			labels[versionlabel.Key] = v
+			name = "atelet-" + v
+		}
+		out = append(out, appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Namespace: ateSystemNamespace, Name: name, Labels: labels}})
+	}
+	return out
 }
 
 func testWorker(name, node, namespace, pod string) *ateapipb.Worker {
@@ -220,11 +244,12 @@ func TestBlockingActorsOnNode(t *testing.T) {
 	pausedOnA.Status.LocalSnapshotInfo = &ateapipb.LocalSnapshotInfo{NodeVmsWithLocalSnapshots: []string{"node-a"}}
 
 	tests := []struct {
-		name    string
-		actors  []*ateapipb.Actor
-		workers []*ateapipb.Worker
-		node    string
-		want    []string
+		name     string
+		actors   []*ateapipb.Actor
+		workers  []*ateapipb.Worker
+		node     string
+		onlyPods map[string]bool
+		want     []string
 	}{
 		{
 			name:    "running actor bound to node worker blocks",
@@ -290,11 +315,48 @@ func TestBlockingActorsOnNode(t *testing.T) {
 			node:    "node-a",
 			want:    []string{"space/leaving (SUSPENDING on pod ns1/pod1)"},
 		},
+		{
+			name:     "pod filter includes the worker's pod: still blocks",
+			actors:   []*ateapipb.Actor{testActor("space", "runner", ateapipb.ActorState_ACTOR_STATE_RUNNING, "w1")},
+			workers:  workers,
+			node:     "node-a",
+			onlyPods: map[string]bool{"ns1/pod1": true},
+			want:     []string{"space/runner (RUNNING on pod ns1/pod1)"},
+		},
+		{
+			name:     "pod filter excludes the worker's pod: does not block",
+			actors:   []*ateapipb.Actor{testActor("space", "runner", ateapipb.ActorState_ACTOR_STATE_RUNNING, "w1")},
+			workers:  workers,
+			node:     "node-a",
+			onlyPods: map[string]bool{"ns1/other": true},
+			want:     nil,
+		},
+		{
+			name: "pod filter also scopes worker-reported assignments",
+			workers: []*ateapipb.Worker{
+				func() *ateapipb.Worker {
+					w := testWorker("w1", "node-a", "ns1", "pod1")
+					w.Status.Assignment = &ateapipb.ActorAssignment{Actor: &ateapipb.ObjectRef{Atespace: "space", Name: "ghost"}}
+					return w
+				}(),
+			},
+			node:     "node-a",
+			onlyPods: map[string]bool{},
+			want:     nil,
+		},
+		{
+			name:     "pod filter never scopes paused local-snapshot blocking",
+			actors:   []*ateapipb.Actor{pausedOnA},
+			workers:  workers,
+			node:     "node-a",
+			onlyPods: map[string]bool{},
+			want:     []string{"space/paused (PAUSED, local snapshot on node)"},
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := blockingActorsOnNode(test.actors, test.workers, test.node)
+			got := blockingActorsOnNode(test.actors, test.workers, test.node, test.onlyPods)
 			if diff := cmp.Diff(test.want, got); diff != "" {
 				t.Errorf("blockingActorsOnNode() mismatch (-want +got):\n%s", diff)
 			}
@@ -313,7 +375,7 @@ func TestSubstrateNodes(t *testing.T) {
 		testWorkerPod("ns1", "w", "has-worker", "v1", true),
 		testWorkerPod("ns1", "orphan", "gone-node", "v1", true), // unknown node ignored
 	}
-	ateletPods := []corev1.Pod{testAteletPod("atelet-1", "has-atelet", true)}
+	ateletPods := []corev1.Pod{testAteletPod("atelet-1", "has-atelet", "v1", true)}
 
 	got := substrateNodes(nodes, workerPods, ateletPods)
 	want := []string{"has-atelet", "has-worker", "labeled"}

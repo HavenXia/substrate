@@ -120,7 +120,7 @@ func (r *UpgradeStatusRunner) Run(ctx context.Context) error {
 			Version: nodeVersion(byName[name]),
 			Atelet:  readyRatio(podsOnNode(ateletPods, name)),
 			Workers: workersByVersion(podsOnNode(workerPods, name)),
-			Actors:  len(blockingActorsOnNode(actors, workers, name)),
+			Actors:  len(blockingActorsOnNode(actors, workers, name, nil)),
 		})
 	}
 

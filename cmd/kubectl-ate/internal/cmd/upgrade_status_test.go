@@ -33,8 +33,8 @@ func statusFixtures() (*mockUpgradeKube, *mockUpgradeAPI) {
 			testWorkerPod("ns1", "new-a", "node-a", "v2", false),
 		},
 		ateletPods: []corev1.Pod{
-			testAteletPod("atelet-a", "node-a", true),
-			testAteletPod("atelet-b", "node-b", false),
+			testAteletPod("atelet-a", "node-a", "v1", true),
+			testAteletPod("atelet-b", "node-b", "v1", false),
 		},
 	}
 	api := &mockUpgradeAPI{
