@@ -71,8 +71,15 @@ const (
 // buildDeploymentApplyConfig constructs the SSA apply configuration for the
 // Deployment managed by a WorkerPool. Only fields owned by this controller
 // are declared here. otel, when it carries an endpoint, is propagated to the
-// ateom container so it pushes telemetry to that collector.
-func buildDeploymentApplyConfig(wp *atev1alpha1.WorkerPool, otel ateomOTelSettings) *appsv1ac.DeploymentApplyConfiguration {
+// ateom container so it pushes telemetry to that collector. An unset
+// spec.workerImage resolves to the versioned default for the pool's sandbox
+// class.
+func buildDeploymentApplyConfig(wp *atev1alpha1.WorkerPool, otel ateomOTelSettings) (*appsv1ac.DeploymentApplyConfiguration, error) {
+	image, err := resolveWorkerImage(wp)
+	if err != nil {
+		return nil, err
+	}
+
 	labels := map[string]string{}
 	annotations := map[string]string{}
 	if wp.Spec.Template != nil {
@@ -87,7 +94,7 @@ func buildDeploymentApplyConfig(wp *atev1alpha1.WorkerPool, otel ateomOTelSettin
 
 	containerAC := corev1ac.Container().
 		WithName("ateom").
-		WithImage(wp.Spec.WorkerImage).
+		WithImage(image).
 		WithArgs(
 			"--pod-uid=$(POD_UID)",
 			"--atunnel-listen-address=0.0.0.0:443",
@@ -194,7 +201,7 @@ func buildDeploymentApplyConfig(wp *atev1alpha1.WorkerPool, otel ateomOTelSettin
 			WithTemplate(corev1ac.PodTemplateSpec().
 				WithLabels(labels).
 				WithAnnotations(annotations).
-				WithSpec(podSpecAC)))
+				WithSpec(podSpecAC))), nil
 }
 
 // ateomContainerEnv adds the OTLP endpoint and resource identity only when

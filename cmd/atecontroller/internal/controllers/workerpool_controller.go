@@ -110,13 +110,16 @@ func (r *WorkerPoolReconciler) reconcileWorkerPool(ctx context.Context, wp *atev
 }
 
 func (r *WorkerPoolReconciler) applyDeployment(ctx context.Context, wp *atev1alpha1.WorkerPool) error {
-	depAC := buildDeploymentApplyConfig(wp, ateomOTelSettings{
+	depAC, err := buildDeploymentApplyConfig(wp, ateomOTelSettings{
 		Endpoint:             r.OTelEndpoint,
 		MetricExportInterval: r.OTelMetricExportInterval,
 		MetricExportTimeout:  r.OTelMetricExportTimeout,
 		TracesSampler:        r.OTelTracesSampler,
 		TracesSamplerArg:     r.OTelTracesSamplerArg,
 	})
+	if err != nil {
+		return fmt.Errorf("failed to build Deployment: %w", err)
+	}
 	if err := r.Apply(ctx, depAC, client.FieldOwner(workerPoolFieldOwner), client.ForceOwnership); err != nil {
 		return fmt.Errorf("failed to apply Deployment: %w", err)
 	}

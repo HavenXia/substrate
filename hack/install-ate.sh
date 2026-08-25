@@ -151,6 +151,13 @@ run_ko() {
   while IFS= read -r line || [[ -n "${line}" ]]; do
     [[ -n "${line}" ]] && ldflags+=("--ldflags=${line}")
   done < <(make ldflags)
+  # Stamp the registry the default worker images are published to (see
+  # publish_default_worker_images), so pools that omit spec.workerImage
+  # resolve to images this very install pushed. Harmlessly ignored by
+  # binaries that don't link the atecontroller controllers package.
+  if [[ -n "${KO_DOCKER_REPO:-}" ]]; then
+    ldflags+=("--ldflags=-X=github.com/agent-substrate/substrate/cmd/atecontroller/internal/controllers.defaultWorkerImageRepo=${KO_DOCKER_REPO}")
+  fi
 
   # Only ko subcommands that delegate to kubectl (apply, create, delete, run)
   # accept args after `--`. ko build, resolve, deps, login etc. reject
@@ -525,8 +532,25 @@ setup_csi() {
   "${ROOT}/hack/setup-csi-nfs-kind.sh"
 }
 
+publish_default_worker_images() {
+  # Build and push the ateom images under the exact names the controller's
+  # compiled-in default composes: ${KO_DOCKER_REPO}/ateom-<class>:<version>.
+  # No version validation here: ko enforces the docker tag grammar, which is
+  # exactly the set of strings the controller's imageTag() passes through
+  # unchanged, so anything ko accepts is composed identically on both sides.
+  log_step "publish_default_worker_images"
+  local version
+  version="$(make -s ldflags | sed -n 's/.*\.Version=//p' | head -1)"
+  run_ko build --tags "${version}" --base-import-paths \
+    ./cmd/ateom-gvisor ./cmd/ateom-microvm
+}
+
 deploy_ate_system() {
   log_step "deploy_ate_system"
+  # Publish the default worker images first: the controller injected below is
+  # stamped (see run_ko) to resolve image-less WorkerPools to these refs.
+  publish_default_worker_images
+
   # Ensure namespace exists before applying RBAC or CRDs
   run_kubectl apply -f manifests/ate-install/ate-system-namespace.yaml \
     && run_kubectl wait --for=jsonpath='{.status.phase}'=Active namespace/ate-system --timeout=60s
