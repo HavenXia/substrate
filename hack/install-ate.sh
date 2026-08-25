@@ -245,6 +245,29 @@ atelet_daemonset_name() {
   echo "atelet-${SUBSTRATE_VERSION_SUFFIX}"
 }
 
+# wait_worker_pool_rollout gates on the worker Deployment ate-controller
+# renders for a WorkerPool. The set is version-keyed (<pool>-<suffix>), so the
+# wait selects by label, not by fixed name, and pins the installing version:
+# during an upgrade another version's set may legitimately sit Pending. The
+# set is rendered asynchronously after the WorkerPool applies, and `kubectl
+# rollout status` fails immediately while the selector has no match, so wait
+# for it to exist first.
+wait_worker_pool_rollout() {
+  local namespace="$1" pool="$2" timeout="${3:-300s}"
+  ensure_substrate_version
+  local selector="ate.dev/worker-pool=${pool},ate.dev/substrate-version=${SUBSTRATE_VERSION}"
+  local i=""
+  for i in $(seq 1 60); do
+    if [[ -n "$(run_kubectl get deployment -n "${namespace}" -l "${selector}" -o name 2>/dev/null)" ]]; then
+      run_kubectl rollout status deployment -n "${namespace}" -l "${selector}" --timeout="${timeout}"
+      return
+    fi
+    sleep 2
+  done
+  echo "error: ate-controller never rendered the worker set for pool ${namespace}/${pool} at version ${SUBSTRATE_VERSION}" >&2
+  return 1
+}
+
 # substitute_version fills the ${SUBSTRATE_VERSION}/${SUBSTRATE_VERSION_SUFFIX}
 # placeholders in a rendered manifest stream. It runs after kustomize and ko
 # (both pass unknown ${...} strings through untouched), so overlay patches key

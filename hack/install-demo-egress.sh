@@ -80,10 +80,7 @@ demo-egress_deploy() {
     | run_ko apply -f -
 
   log_step "Waiting for egress demo to be ready..."
-  # The WorkerPool controller names the Deployment after the WorkerPool
-  # ("egress"), the same way demo-counter gets "deployment/counter". The old
-  # "egress-deployment" name was NotFound on every successful deploy.
-  run_kubectl rollout status deployment/egress -n ate-demo-egress --timeout=300s
+  wait_worker_pool_rollout ate-demo-egress egress 300s
   run_kubectl wait --for=condition=Ready actortemplate/egress -n ate-demo-egress --timeout=300s
 }
 
@@ -105,7 +102,7 @@ demo-egress-microvm_deploy() {
     | run_ko apply -f -
 
   log_step "Waiting for micro-VM egress demo to be ready..."
-  run_kubectl rollout status deployment/egress-microvm -n ate-demo-egress-microvm --timeout=300s
+  wait_worker_pool_rollout ate-demo-egress-microvm egress-microvm 300s
   # A micro-VM golden is a cloud-hypervisor cold boot plus a checkpoint, on
   # nested KVM in CI, so it needs a longer budget than the gVisor one above.
   run_kubectl wait --for=condition=Ready actortemplate/egress-microvm \
@@ -131,7 +128,7 @@ demo-egress-mitm_deploy() {
     | run_ko apply -f -
 
   log_step "Waiting for MITM egress demo to be ready..."
-  run_kubectl rollout status deployment/egress-mitm -n ate-demo-egress-mitm --timeout=300s
+  wait_worker_pool_rollout ate-demo-egress-mitm egress-mitm 300s
   # The golden snapshot only becomes Ready once an actor starts, and an actor
   # whose trust bundle does not resolve never does — so a timeout here is the
   # symptom of a missing sdsmint install (see demo-egress-mitm_usage).
@@ -158,8 +155,7 @@ demo-egress-microvm-mitm_deploy() {
     | run_ko apply -f -
 
   log_step "Waiting for micro-VM MITM egress demo to be ready..."
-  run_kubectl rollout status deployment/egress-microvm-mitm \
-    -n ate-demo-egress-microvm-mitm --timeout=300s
+  wait_worker_pool_rollout ate-demo-egress-microvm-mitm egress-microvm-mitm 300s
   # A micro-VM golden is a cloud-hypervisor cold boot plus a checkpoint, on
   # nested KVM in CI, so it needs a longer budget than the gVisor one above.
   run_kubectl wait --for=condition=Ready actortemplate/egress-microvm-mitm \

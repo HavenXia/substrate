@@ -122,9 +122,17 @@ deploy() {
     --all --ignore-not-found
   substitute | hack/run-tool.sh ko apply -f -
   echo "Waiting for worker pool to be ready (timeout: ${WAIT_TIMEOUT})..."
-  kubectl wait --for=create deployment/benchmark-ateom \
-    --namespace=benchmark-workloads --timeout="${WAIT_TIMEOUT}"
-  kubectl rollout status deployment/benchmark-ateom \
+  # The worker Deployment is version-keyed (benchmark-ateom-<suffix>), so wait
+  # by the pool label rather than a fixed name. It is rendered asynchronously
+  # after the WorkerPool applies; `kubectl rollout status` fails immediately
+  # while the selector has no match, so wait for it to exist first.
+  local i=""
+  for i in $(seq 1 60); do
+    [[ -z "$(kubectl get deployment -l ate.dev/worker-pool=benchmark-ateom \
+      --namespace=benchmark-workloads -o name)" ]] || break
+    sleep 2
+  done
+  kubectl rollout status deployment -l ate.dev/worker-pool=benchmark-ateom \
     --namespace=benchmark-workloads --timeout="${WAIT_TIMEOUT}"
 }
 

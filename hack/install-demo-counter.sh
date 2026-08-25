@@ -69,7 +69,10 @@ demo-counter_deploy() {
   # with a tight readiness deadline -- run against an already-warm node instead
   # of racing that cold-start work.
   log_step "Waiting for counter demo to be ready..."
-  run_kubectl_fatal rollout status deployment/counter -n ate-demo-counter --timeout=300s
+  if ! wait_worker_pool_rollout ate-demo-counter counter 300s; then
+    echo "error: counter worker set rollout failed" >&2
+    exit 1
+  fi
   run_kubectl_fatal wait --for=condition=Ready actortemplate/counter -n ate-demo-counter --timeout=300s
 }
 
