@@ -167,6 +167,8 @@ func validateCreateActorRequest(req *ateapipb.CreateActorRequest) field.ErrorLis
 		return errs
 	}
 
+	errs = append(errs, validateNoUnknownFields(actor, actorPath)...)
+
 	metaPath := actorPath.Child("metadata")
 	if val, p := actor.GetMetadata().GetAtespace(), metaPath.Child("atespace"); val == "" {
 		errs = append(errs, field.Required(p, ""))

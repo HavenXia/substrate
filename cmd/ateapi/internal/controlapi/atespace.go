@@ -60,6 +60,8 @@ func validateCreateAtespaceRequest(req *ateapipb.CreateAtespaceRequest) field.Er
 		return errs
 	}
 
+	errs = append(errs, validateNoUnknownFields(atespace, atespacePath)...)
+
 	// Atespace is global-scoped: metadata.atespace must be empty, name required + valid.
 	metaPath := atespacePath.Child("metadata")
 	if val, p := atespace.GetMetadata().GetAtespace(), metaPath.Child("atespace"); val != "" {

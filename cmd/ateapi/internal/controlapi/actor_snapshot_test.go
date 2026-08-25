@@ -503,17 +503,17 @@ func TestUpdateActorSnapshotTag_RejectsUnknownFields(t *testing.T) {
 		{
 			name:               "at the top level",
 			injectUnknownField: func(tag *ateapipb.ActorSnapshotTag) { tag.ProtoReflect().SetUnknown(unknownField(9999)) },
-			wantPath:           field.NewPath("tag"),
+			wantPath:           field.NewPath("actor_snapshot_tag"),
 		},
 		{
 			name:               "nested in metadata",
 			injectUnknownField: func(tag *ateapipb.ActorSnapshotTag) { tag.Metadata.ProtoReflect().SetUnknown(unknownField(9999)) },
-			wantPath:           field.NewPath("tag", "metadata"),
+			wantPath:           field.NewPath("actor_snapshot_tag", "metadata"),
 		},
 		{
 			name:               "nested in snapshot",
 			injectUnknownField: func(tag *ateapipb.ActorSnapshotTag) { tag.Snapshot.ProtoReflect().SetUnknown(unknownField(9999)) },
-			wantPath:           field.NewPath("tag", "snapshot"),
+			wantPath:           field.NewPath("actor_snapshot_tag", "snapshot"),
 		},
 	}
 	for _, tt := range tests {
@@ -526,7 +526,7 @@ func TestUpdateActorSnapshotTag_RejectsUnknownFields(t *testing.T) {
 			in := proto.Clone(stored).(*ateapipb.ActorSnapshotTag)
 			tt.injectUnknownField(in)
 
-			_, err := svc.UpdateActorSnapshotTag(ctx, &ateapipb.UpdateActorSnapshotTagRequest{Tag: in})
+			_, err := svc.UpdateActorSnapshotTag(ctx, &ateapipb.UpdateActorSnapshotTagRequest{ActorSnapshotTag: in})
 			wantErr := toGRPCStatusError(field.ErrorList{
 				field.Invalid(tt.wantPath, field.OmitValueType{}, ""),
 			})
@@ -540,7 +540,7 @@ func TestUpdateActorSnapshotTag_RejectsUnknownFields(t *testing.T) {
 			// The rejection happens before the store is touched, so the tag is
 			// left exactly as it was.
 			after, err := svc.GetActorSnapshotTag(ctx, &ateapipb.GetActorSnapshotTagRequest{
-				Tag: &ateapipb.ObjectRef{Atespace: testAtespace, Name: "tag-1"},
+				ActorSnapshotTag: &ateapipb.ObjectRef{Atespace: testAtespace, Name: "tag-1"},
 			})
 			if err != nil {
 				t.Fatalf("GetActorSnapshotTag() error = %v", err)
@@ -550,4 +550,18 @@ func TestUpdateActorSnapshotTag_RejectsUnknownFields(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateCreateActorSnapshotTagRequestUnknownFields(t *testing.T) {
+	validTag := func() *ateapipb.ActorSnapshotTag {
+		return &ateapipb.ActorSnapshotTag{
+			Metadata: &ateapipb.ResourceMetadata{Atespace: "team-a", Name: "tag-1"},
+			Snapshot: &ateapipb.ObjectRef{Atespace: "team-a", Name: "snap-1"},
+			Scope:    ateapipb.ActorSnapshotTagScope_ACTOR_SNAPSHOT_TAG_SCOPE_ATESPACE,
+		}
+	}
+	assertValidateErr(t, validateCreateActorSnapshotTagRequest(&ateapipb.CreateActorSnapshotTagRequest{ActorSnapshotTag: validTag()}), nil)
+	assertValidateErr(t,
+		validateCreateActorSnapshotTagRequest(&ateapipb.CreateActorSnapshotTagRequest{ActorSnapshotTag: withUnknown(validTag(), 9999)}),
+		field.ErrorList{field.Invalid(field.NewPath("actor_snapshot_tag"), field.OmitValueType{}, "")})
 }
