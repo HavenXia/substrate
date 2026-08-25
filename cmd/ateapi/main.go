@@ -218,6 +218,7 @@ func main() {
 			ateapiauth.UnaryServerInterceptor(authCfg),
 			ateinterceptors.MaxDeadlineUnaryInterceptor(maxRPCDeadline),
 			ateinterceptors.ServerUnaryInterceptor,
+			ateinterceptors.RejectUnknownFieldsUnaryInterceptor,
 		),
 		grpc.ChainStreamInterceptor(
 			ateapiauth.StreamServerInterceptor(authCfg),
