@@ -25,6 +25,7 @@ import (
 	"github.com/agent-substrate/substrate/pkg/proto/ateapipb"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -71,6 +72,14 @@ type upgradeKube interface {
 	// non-empty.
 	ListAteletPods(ctx context.Context, node string) ([]corev1.Pod, error)
 	DeletePod(ctx context.Context, namespace, name string) error
+	// ListWorkerDeployments returns Deployments carrying the worker-pool label
+	// across all namespaces.
+	ListWorkerDeployments(ctx context.Context) ([]appsv1.Deployment, error)
+	DeleteDeployment(ctx context.Context, namespace, name string) error
+	// ListAteletDaemonSets returns the atelet DaemonSets, labeled and
+	// unlabeled alike.
+	ListAteletDaemonSets(ctx context.Context) ([]appsv1.DaemonSet, error)
+	DeleteDaemonSet(ctx context.Context, namespace, name string) error
 }
 
 // kubeUpgradeClient implements upgradeKube on a Kubernetes clientset.
@@ -128,6 +137,30 @@ func (c *kubeUpgradeClient) ListAteletPods(ctx context.Context, node string) ([]
 
 func (c *kubeUpgradeClient) DeletePod(ctx context.Context, namespace, name string) error {
 	return c.clientset.CoreV1().Pods(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+}
+
+func (c *kubeUpgradeClient) ListWorkerDeployments(ctx context.Context) ([]appsv1.Deployment, error) {
+	list, err := c.clientset.AppsV1().Deployments(metav1.NamespaceAll).List(ctx, metav1.ListOptions{LabelSelector: workerPoolLabelKey})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list worker deployments: %w", err)
+	}
+	return list.Items, nil
+}
+
+func (c *kubeUpgradeClient) DeleteDeployment(ctx context.Context, namespace, name string) error {
+	return c.clientset.AppsV1().Deployments(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+}
+
+func (c *kubeUpgradeClient) ListAteletDaemonSets(ctx context.Context) ([]appsv1.DaemonSet, error) {
+	list, err := c.clientset.AppsV1().DaemonSets(ateSystemNamespace).List(ctx, metav1.ListOptions{LabelSelector: ateletPodSelector})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list atelet daemonsets: %w", err)
+	}
+	return list.Items, nil
+}
+
+func (c *kubeUpgradeClient) DeleteDaemonSet(ctx context.Context, namespace, name string) error {
+	return c.clientset.AppsV1().DaemonSets(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 }
 
 // listAllActors pages through ListActors across all atespaces.

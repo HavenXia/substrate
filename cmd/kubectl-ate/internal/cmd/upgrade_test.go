@@ -23,6 +23,7 @@ import (
 	"github.com/agent-substrate/substrate/pkg/proto/ateapipb"
 	"github.com/google/go-cmp/cmp"
 	"google.golang.org/grpc"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -66,12 +67,16 @@ func (m *mockUpgradeAPI) DrainWorker(ctx context.Context, req *ateapipb.DrainWor
 // mockUpgradeKube keeps pods/nodes/deployments in memory and applies
 // mutations, so idempotency flows behave like a live cluster.
 type mockUpgradeKube struct {
-	nodes      []corev1.Node
-	workerPods []corev1.Pod
-	ateletPods []corev1.Pod
+	nodes            []corev1.Node
+	workerPods       []corev1.Pod
+	ateletPods       []corev1.Pod
+	deployments      []appsv1.Deployment
+	ateletDaemonSets []appsv1.DaemonSet
 
-	patchedLabels []string // "node:key=value"
-	deletedPods   []string // "ns/name"
+	patchedLabels      []string // "node:key=value"
+	deletedPods        []string // "ns/name"
+	deletedDeployments []string // "ns/name"
+	deletedDaemonSets  []string // "ns/name"
 }
 
 func (m *mockUpgradeKube) ListNodes(ctx context.Context) ([]corev1.Node, error) {
@@ -120,6 +125,24 @@ func (m *mockUpgradeKube) DeletePod(ctx context.Context, namespace, name string)
 			break
 		}
 	}
+	return nil
+}
+
+func (m *mockUpgradeKube) ListWorkerDeployments(ctx context.Context) ([]appsv1.Deployment, error) {
+	return append([]appsv1.Deployment(nil), m.deployments...), nil
+}
+
+func (m *mockUpgradeKube) DeleteDeployment(ctx context.Context, namespace, name string) error {
+	m.deletedDeployments = append(m.deletedDeployments, namespace+"/"+name)
+	return nil
+}
+
+func (m *mockUpgradeKube) ListAteletDaemonSets(ctx context.Context) ([]appsv1.DaemonSet, error) {
+	return append([]appsv1.DaemonSet(nil), m.ateletDaemonSets...), nil
+}
+
+func (m *mockUpgradeKube) DeleteDaemonSet(ctx context.Context, namespace, name string) error {
+	m.deletedDaemonSets = append(m.deletedDaemonSets, namespace+"/"+name)
 	return nil
 }
 
