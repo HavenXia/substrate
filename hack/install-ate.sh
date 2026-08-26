@@ -86,6 +86,8 @@ function usage() {
   echo "Infrastructure components:"
   echo ""
   echo "  --deploy-atelet                        Deploy atelet only"
+  echo "  --deploy-ate-controller                Deploy ate-controller only (with CRDs and default worker images)"
+  echo "  --upgrade-ate-system                   Staged upgrade to this build: CRDs, controller, atelet, node driver, api, atenet"
   echo "  --deploy-ate-apiserver                 Deploy ate-api-server only"
   echo "  --deploy-atenet                        Deploy atenet only"
   echo ""
@@ -655,6 +657,17 @@ deploy_ate_system() {
   # ate-controller renders only schedule to version-labeled nodes.
   label_nodes_substrate_version
 
+  # On GKE also stamp the version on the node pool, so nodes born later
+  # (autoscaling, resize, auto-repair) come up labeled instead of idling
+  # unlabeled until someone notices. --only-if-absent: the pool update
+  # applies in place to every existing node, so if the pool already carries
+  # a different version this install must not yank the fleet across
+  # versions behind the drain gate's back (that move is --upgrade-ate-system's
+  # post-roll step).
+  if gke_pool_ops; then
+    go run ./tools/setup-gcp pool set-version-label --version "${SUBSTRATE_VERSION}" --only-if-absent
+  fi
+
   # Not ensure_crds: its existence check skips upgrades, stranding stale CRD
   # schemas and RBAC (role.yaml has no other apply path).
   deploy_crds
@@ -755,6 +768,26 @@ deploy_ate_apiserver() {
   run_kubectl rollout status deployment/ate-api-server -n ate-system --timeout="$(rollout_timeout)"
 }
 
+# Redeploy only the ate-controller, with everything a controller upgrade
+# ships: new CRD schemas and RBAC, and the default worker images this build
+# stamps into the binary (an image-less WorkerPool resolves to them).
+deploy_ate_controller() {
+  log_step "deploy_ate_controller"
+  ensure_substrate_version
+  # Re-apply, not ensure: an upgrade must not strand stale CRD schemas or RBAC.
+  deploy_crds
+
+  # Ensure namespace exists
+  run_kubectl apply -f manifests/ate-install/ate-system-namespace.yaml \
+    && run_kubectl wait --for=jsonpath='{.status.phase}'=Active namespace/ate-system --timeout=60s
+
+  publish_default_worker_images
+  apply_otel_config
+
+  run_ko apply -f manifests/ate-install/ate-controller.yaml
+  run_kubectl rollout status deployment/ate-controller -n ate-system --timeout="$(rollout_timeout)"
+}
+
 deploy_atelet() {
   log_step "deploy_atelet"
   ensure_substrate_version
@@ -801,6 +834,78 @@ deploy_atenet() {
   run_kubectl rollout status deployment/atenet-router -n ate-system --timeout="$(rollout_timeout)"
   run_kubectl rollout status deployment/atenet-egress -n ate-system --timeout="$(rollout_timeout)"
   run_kubectl rollout status deployment/dns -n ate-system --timeout="$(rollout_timeout)"
+}
+
+# gke_pool_ops decides whether the upgrade wraps the roll in GKE node pool
+# operations (autoscaler off for the roll window, pool version label moved
+# after it). Enabled when the GKE env (.ate-dev-env.sh) is loaded; kind flows
+# have no PROJECT_ID and skip it. ATE_SKIP_GKE_POOL_OPS=true opts out, e.g.
+# when the operator manages the pool themselves.
+gke_pool_ops() {
+  [[ "${ATE_SKIP_GKE_POOL_OPS:-false}" != "true" && -n "${PROJECT_ID:-}" && -n "${CLUSTER_NAME:-}" ]]
+}
+
+# Staged upgrade of an installed system to this checkout's build version, in
+# the order the upgrade proposal prescribes: CRDs and ate-controller first
+# (stages the new worker sets, all Pending), then the versioned atelet
+# DaemonSet (empty until nodes flip), then the node-by-node driver, then
+# ate-api and atenet. The driver waits for actors to leave each node at the
+# user's own pace; pass extra driver flags (e.g. --drain-timeout) via
+# ATE_UPGRADE_DRIVER_FLAGS. Deleting the old worker sets stays a separate
+# post-soak step: kubectl ate upgrade cleanup --version <old>.
+#
+# On GKE (see gke_pool_ops) the roll is wrapped in pool operations: the
+# autoscaler goes off for the roll window (with the pool label still at the
+# old version it would chase the retired side's Pending rollback pods and
+# re-inflate it), and after the roll the pool's version label moves to this
+# build so nodes born later (autoscaling, resize, repair) come up at the new
+# version. The pool label must only move after the roll: GKE applies it in
+# place to all existing nodes, which mid-roll would flip the fleet at once.
+upgrade_ate_system() {
+  log_step "upgrade_ate_system"
+  ensure_substrate_version
+
+  if gke_pool_ops; then
+    # Park the autoscaler for the roll window. The pre-roll config is saved
+    # in a ConfigMap, not a shell variable: if the roll dies and this command
+    # is rerun, a fresh capture would read "already disabled" and the
+    # original min/max would be lost for good.
+    local autoscaling=""
+    if ! autoscaling="$(run_kubectl get configmap ate-upgrade-pool-autoscaling \
+        -n ate-system -o jsonpath='{.data.autoscaling}' 2>/dev/null)" || [[ -z "${autoscaling}" ]]; then
+      autoscaling="$(go run ./tools/setup-gcp pool get-autoscaling)"
+      run_kubectl create configmap ate-upgrade-pool-autoscaling \
+        -n ate-system --from-literal=autoscaling="${autoscaling}"
+    fi
+    echo "GKE pool autoscaling before the roll: ${autoscaling}"
+    if [[ "${autoscaling}" == *'"enabled":true'* ]]; then
+      go run ./tools/setup-gcp pool set-autoscaling --enabled=false
+    fi
+  fi
+
+  deploy_ate_controller
+  deploy_atelet
+
+  local driver="${TMPDIR:-/tmp}/kubectl-ate-upgrade.$$"
+  go build -o "${driver}" ./cmd/kubectl-ate
+  # shellcheck disable=SC2086
+  "${driver}" ${KUBECTL_CONTEXT:+--context=${KUBECTL_CONTEXT}} \
+    upgrade run --target-version "${SUBSTRATE_VERSION}" ${ATE_UPGRADE_DRIVER_FLAGS:-}
+  rm -f "${driver}"
+
+  deploy_ate_apiserver
+  deploy_atenet
+
+  if gke_pool_ops; then
+    go run ./tools/setup-gcp pool set-version-label --version "${SUBSTRATE_VERSION}"
+    # --from-json restores the exact pre-roll message: pools autoscaled with
+    # total_* limits or a location policy have no per-zone min/max to rebuild
+    # from, so anything less than the full message is lossy.
+    if [[ "${autoscaling}" == *'"enabled":true'* ]]; then
+      go run ./tools/setup-gcp pool set-autoscaling --from-json "${autoscaling}"
+    fi
+    run_kubectl delete configmap ate-upgrade-pool-autoscaling -n ate-system --ignore-not-found
+  fi
 }
 
 # get_actor_state echoes the actor's state enum (e.g. ACTOR_STATE_SUSPENDED).
@@ -1153,6 +1258,8 @@ while [[ "$#" -gt 0 ]]; do
     --delete-all) delete_all ;;
 
     --deploy-atelet) deploy_atelet ;;
+    --deploy-ate-controller) deploy_ate_controller ;;
+    --upgrade-ate-system) upgrade_ate_system ;;
     --deploy-ate-apiserver) deploy_ate_apiserver ;;
 
     --deploy-atenet) deploy_atenet ;;
