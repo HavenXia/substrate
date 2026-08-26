@@ -609,7 +609,7 @@ github.com/jackc/puddle/v2/internal/genstack
 # github.com/json-iterator/go v1.1.12
 ## explicit; go 1.12
 github.com/json-iterator/go
-# github.com/klauspost/compress v1.18.6
+# github.com/klauspost/compress v1.18.7
 ## explicit; go 1.24
 github.com/klauspost/compress
 github.com/klauspost/compress/flate
@@ -647,8 +647,8 @@ github.com/mdlayher/socket
 # github.com/moby/docker-image-spec v1.3.1
 ## explicit; go 1.18
 github.com/moby/docker-image-spec/specs-go/v1
-# github.com/moby/go-archive v0.2.0
-## explicit; go 1.23.0
+# github.com/moby/go-archive v0.3.0
+## explicit; go 1.25
 github.com/moby/go-archive
 github.com/moby/go-archive/compression
 github.com/moby/go-archive/tarheader
@@ -689,11 +689,11 @@ github.com/moby/patternmatcher/ignorefile
 ## explicit; go 1.13
 github.com/moby/spdystream
 github.com/moby/spdystream/spdy
-# github.com/moby/sys/sequential v0.6.0
-## explicit; go 1.17
+# github.com/moby/sys/sequential v0.7.0
+## explicit; go 1.24.0
 github.com/moby/sys/sequential
-# github.com/moby/sys/user v0.4.0
-## explicit; go 1.17
+# github.com/moby/sys/user v0.4.1
+## explicit; go 1.18
 github.com/moby/sys/user
 # github.com/moby/sys/userns v0.1.0
 ## explicit; go 1.21

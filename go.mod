@@ -26,7 +26,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-reap v0.0.0-20260220095743-4e27870b4f51
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/klauspost/compress v1.18.6
+	github.com/klauspost/compress v1.18.7
 	github.com/myzhan/boomer v1.6.1-0.20250711115830-8a2c7ce4c7b1
 	github.com/opencontainers/runtime-spec v1.3.0
 	github.com/pelletier/go-toml/v2 v2.4.0
@@ -155,13 +155,13 @@ require (
 	github.com/mdlayher/netlink v1.7.3-0.20250113171957-fbb4dce95f42 // indirect
 	github.com/mdlayher/socket v0.5.0 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
-	github.com/moby/go-archive v0.2.0 // indirect
+	github.com/moby/go-archive v0.3.0 // indirect
 	github.com/moby/moby/api v1.54.2 // indirect
 	github.com/moby/moby/client v0.4.1 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/spdystream v0.5.1 // indirect
-	github.com/moby/sys/sequential v0.6.0 // indirect
-	github.com/moby/sys/user v0.4.0 // indirect
+	github.com/moby/sys/sequential v0.7.0 // indirect
+	github.com/moby/sys/user v0.4.1 // indirect
 	github.com/moby/sys/userns v0.1.0 // indirect
 	github.com/moby/term v0.5.2 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
