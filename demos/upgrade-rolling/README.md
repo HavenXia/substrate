@@ -1,5 +1,9 @@
 # Rolling Dataplane Upgrade Demo
 
+> release-2.0 note: this release is identical to release-1.0 apart from this
+> paragraph. It exists so the demo has a second release to check out and
+> roll to; the version stamp (from `git describe`) is what tells them apart.
+
 This demo installs substrate from zero on a throwaway kind cluster at one
 build version, runs a stateful counter actor, then rolls the dataplane to a
 second build version with `kubectl ate upgrade run` — and proves the actor's
