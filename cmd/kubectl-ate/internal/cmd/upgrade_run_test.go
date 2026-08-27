@@ -240,6 +240,134 @@ func TestUpgradeRollRunner_DrainFailureAborts(t *testing.T) {
 	}
 }
 
+func TestUpgradeRollRunner_ConvergesOverNodesJoiningMidRoll(t *testing.T) {
+	// node-c joins (autoscaler-style, born at the old version with old worker
+	// pods) after the first pass already listed nodes. One invocation must
+	// still converge: the re-list picks it up in a second pass.
+	kube, api := twoNodeCluster()
+	joined := false
+	kube.onListNodes = func(call int) {
+		if call < 2 || joined {
+			return
+		}
+		joined = true
+		kube.nodes = append(kube.nodes, testNode("node-c", "v1"))
+		kube.workerPods = append(kube.workerPods,
+			testWorkerPod("ns1", "old-c", "node-c", "v1", true),
+			testWorkerPod("ns1", "new-c", "node-c", "v2", true),
+		)
+		kube.ateletPods = append(kube.ateletPods,
+			testAteletPod("atelet-c-v1", "node-c", "v1", true),
+			testAteletPod("atelet-c-v2", "node-c", "v2", true),
+		)
+		api.workers = append(api.workers,
+			testWorker("wc", "node-c", "ns1", "old-c"),
+			testWorker("wnc", "node-c", "ns1", "new-c"),
+		)
+	}
+	var buf bytes.Buffer
+	runner := newTestRollRunner(kube, api, "v2", &buf)
+
+	if err := runner.Run(context.Background()); err != nil {
+		t.Fatalf("Run() unexpected error: %v\noutput:\n%s", err, buf.String())
+	}
+	if diff := cmp.Diff([]string{"wa", "wb", "wc"}, api.drained); diff != "" {
+		t.Errorf("drained workers mismatch (-want +got):\n%s", diff)
+	}
+	want := []string{
+		"node-a:ate.dev/substrate-version=v2",
+		"node-b:ate.dev/substrate-version=v2",
+		"node-c:ate.dev/substrate-version=v2",
+	}
+	if diff := cmp.Diff(want, kube.patchedLabels); diff != "" {
+		t.Errorf("patched labels mismatch (-want +got):\n%s", diff)
+	}
+	if !strings.Contains(buf.String(), "joined or reverted during the roll") {
+		t.Errorf("output missing converge-pass line:\n%s", buf.String())
+	}
+}
+
+func TestUpgradeRollRunner_ConvergeIgnoresTerminatingPods(t *testing.T) {
+	// On a real cluster DeletePod is graceful: the old pods linger with a
+	// DeletionTimestamp for their grace period. The converge re-list must not
+	// count them, or every healthy roll spins extra passes over done nodes
+	// and can exhaust maxRollRounds.
+	kube, api := twoNodeCluster()
+	kube.deletePodsLinger = true
+	var buf bytes.Buffer
+	runner := newTestRollRunner(kube, api, "v2", &buf)
+
+	if err := runner.Run(context.Background()); err != nil {
+		t.Fatalf("Run() unexpected error: %v\noutput:\n%s", err, buf.String())
+	}
+	if strings.Contains(buf.String(), "joined or reverted during the roll") {
+		t.Errorf("terminating pods triggered a spurious converge pass:\n%s", buf.String())
+	}
+	// Each old pod is deleted exactly once, not once per spurious pass.
+	if diff := cmp.Diff([]string{"ns1/old-a", "ns1/old-b"}, kube.deletedPods); diff != "" {
+		t.Errorf("deleted pods mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestUpgradeRollRunner_SkipsNodeDeletedMidRoll(t *testing.T) {
+	// The pass iterates a node-list snapshot; the autoscaler can remove a
+	// node (scale-down) before the pass reaches it. The label patch 404s and
+	// the roll must skip the node, not abort.
+	kube, api := twoNodeCluster()
+	// The pass's node list is snapshotted before any work; when node-a's old
+	// pod is deleted (mid-pass), node-b vanishes with its pods.
+	kube.onDeletePod = func() {
+		kube.nodes = kube.nodes[:1]
+		var pods []corev1.Pod
+		for _, p := range kube.workerPods {
+			if p.Spec.NodeName != "node-b" {
+				pods = append(pods, p)
+			}
+		}
+		kube.workerPods = pods
+	}
+	var buf bytes.Buffer
+	runner := newTestRollRunner(kube, api, "v2", &buf)
+
+	if err := runner.Run(context.Background()); err != nil {
+		t.Fatalf("Run() unexpected error: %v\noutput:\n%s", err, buf.String())
+	}
+	if !strings.Contains(buf.String(), "node node-b no longer exists; skipping") {
+		t.Errorf("output missing vanished-node skip line:\n%s", buf.String())
+	}
+	for _, patched := range kube.patchedLabels {
+		if strings.HasPrefix(patched, "node-b:") {
+			t.Errorf("patched a vanished node: %v", kube.patchedLabels)
+		}
+	}
+}
+
+func TestUpgradeRollRunner_ExplicitNodesSkipConvergePasses(t *testing.T) {
+	// With --node the user picked the exact set: nodes joining mid-roll are
+	// not picked up.
+	kube, api := twoNodeCluster()
+	joined := false
+	kube.onListNodes = func(call int) {
+		if joined {
+			return
+		}
+		joined = true
+		kube.nodes = append(kube.nodes, testNode("node-c", "v1"))
+	}
+	var buf bytes.Buffer
+	runner := newTestRollRunner(kube, api, "v2", &buf)
+	runner.nodes = []string{"node-a", "node-b"}
+
+	if err := runner.Run(context.Background()); err != nil {
+		t.Fatalf("Run() unexpected error: %v\noutput:\n%s", err, buf.String())
+	}
+	for _, patched := range kube.patchedLabels {
+		if strings.HasPrefix(patched, "node-c:") {
+			t.Errorf("explicit --node run touched node-c: %v", kube.patchedLabels)
+		}
+	}
+}
+
 func TestUpgradeRollRunner_IdempotentRerunSkipsDoneNodes(t *testing.T) {
 	kube, api := twoNodeCluster()
 	var buf bytes.Buffer

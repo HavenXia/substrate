@@ -160,8 +160,77 @@ func (r *UpgradeRollRunner) Run(ctx context.Context) error {
 			return fmt.Errorf("node %s: %w", node.Name, err)
 		}
 	}
-	fmt.Fprintf(r.out, "Done: %d node(s) at version %q\n", len(nodes), target)
+
+	// Nodes can join or revert while the pass above runs: the autoscaler adds
+	// nodes born with the old pool label, and a node recreation (auto-repair,
+	// auto-upgrade) comes back at the pool label too. Re-list and keep rolling
+	// until a pass finds nothing left, so one invocation converges. Explicit
+	// --node lists stay a single pass: the user picked the exact set.
+	if len(r.nodes) == 0 {
+		for round := 2; ; round++ {
+			pending, err := r.pendingNodes(ctx, target)
+			if err != nil {
+				return err
+			}
+			if len(pending) == 0 {
+				break
+			}
+			if round > maxRollRounds {
+				return fmt.Errorf("nodes still need converting after %d passes (is something still producing old-version nodes, e.g. an uncapped autoscaler?): %s", maxRollRounds, nodeNames(pending))
+			}
+			fmt.Fprintf(r.out, "Pass %d: %d node(s) joined or reverted during the roll\n", round, len(pending))
+			for i, node := range pending {
+				if err := r.rollNode(ctx, i+1, len(pending), node, target); err != nil {
+					return fmt.Errorf("node %s: %w", node.Name, err)
+				}
+			}
+		}
+	}
+	fmt.Fprintf(r.out, "Done: all substrate nodes at version %q\n", target)
 	return nil
+}
+
+// maxRollRounds bounds the converge loop. Passes beyond the first only happen
+// when nodes join or revert mid-roll; needing this many means something keeps
+// producing old-version nodes faster than the roll converts them.
+const maxRollRounds = 10
+
+// pendingNodes returns the substrate nodes that still need work: wrong version
+// label or worker pods not at the target version, in selectNodes order.
+// Terminating pods do not count: right after a pass, the just-deleted old
+// pods linger in the API for their (long) grace period, and counting them
+// would spin the converge loop over already-done nodes until maxRollRounds.
+func (r *UpgradeRollRunner) pendingNodes(ctx context.Context, target string) ([]corev1.Node, error) {
+	nodes, err := r.selectNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var pending []corev1.Node
+	for _, node := range nodes {
+		if nodeVersion(&node) != target {
+			pending = append(pending, node)
+			continue
+		}
+		pods, err := r.kube.ListWorkerPods(ctx, node.Name)
+		if err != nil {
+			return nil, err
+		}
+		for _, pod := range podsNotAtVersion(pods, target) {
+			if pod.DeletionTimestamp == nil {
+				pending = append(pending, node)
+				break
+			}
+		}
+	}
+	return pending, nil
+}
+
+func nodeNames(nodes []corev1.Node) string {
+	names := make([]string, 0, len(nodes))
+	for i := range nodes {
+		names = append(names, nodes[i].Name)
+	}
+	return summarizeList(names, 5)
 }
 
 // selectNodes returns the nodes to process. Explicit --node names are used in
@@ -249,6 +318,14 @@ func (r *UpgradeRollRunner) rollNode(ctx context.Context, i, n int, node corev1.
 	if current != target {
 		fmt.Fprintf(r.out, "  labeling node %s %s=%s\n", node.Name, versionlabel.Key, target)
 		if err := r.kube.PatchNodeLabel(ctx, node.Name, versionlabel.Key, target); err != nil {
+			// Nodes vanish mid-roll (autoscaler scale-down, pool repair); the
+			// list the pass iterates is a snapshot. A gone node needs nothing
+			// from us, and its replacement, if any, is picked up by the next
+			// converge pass.
+			if apierrors.IsNotFound(err) {
+				fmt.Fprintf(r.out, "  node %s no longer exists; skipping\n", node.Name)
+				return nil
+			}
 			return err
 		}
 	}

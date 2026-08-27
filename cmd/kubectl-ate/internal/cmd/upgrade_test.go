@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -78,13 +79,37 @@ type mockUpgradeKube struct {
 	deletedDeployments []string // "ns/name"
 	deletedDaemonSets  []string // "ns/name"
 	ops                []string // interleaved "patch:node" / "delete:ns/name", in call order
+
+	// onListNodes runs before each ListNodes returns, so tests can make
+	// nodes join or revert mid-roll. onDeletePod runs after each DeletePod,
+	// so tests can make the cluster change under a pass in flight.
+	onListNodes    func(call int)
+	onDeletePod    func()
+	listNodesCalls int
+
+	// deletePodsLinger makes DeletePod behave like a real graceful delete:
+	// the pod stays listed with a DeletionTimestamp instead of vanishing.
+	deletePodsLinger bool
 }
 
 func (m *mockUpgradeKube) ListNodes(ctx context.Context) ([]corev1.Node, error) {
+	m.listNodesCalls++
+	if m.onListNodes != nil {
+		m.onListNodes(m.listNodesCalls)
+	}
 	return append([]corev1.Node(nil), m.nodes...), nil
 }
 
 func (m *mockUpgradeKube) PatchNodeLabel(ctx context.Context, nodeName, key, value string) error {
+	found := false
+	for i := range m.nodes {
+		if m.nodes[i].Name == nodeName {
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("failed to patch node %s: %w", nodeName, apierrors.NewNotFound(corev1.Resource("nodes"), nodeName))
+	}
 	m.patchedLabels = append(m.patchedLabels, fmt.Sprintf("%s:%s=%s", nodeName, key, value))
 	m.ops = append(m.ops, "patch:"+nodeName)
 	for i := range m.nodes {
@@ -128,9 +153,17 @@ func (m *mockUpgradeKube) DeletePod(ctx context.Context, namespace, name string)
 	m.ops = append(m.ops, "delete:"+namespace+"/"+name)
 	for i := range m.workerPods {
 		if m.workerPods[i].Namespace == namespace && m.workerPods[i].Name == name {
-			m.workerPods = append(m.workerPods[:i], m.workerPods[i+1:]...)
+			if m.deletePodsLinger {
+				now := metav1.Now()
+				m.workerPods[i].DeletionTimestamp = &now
+			} else {
+				m.workerPods = append(m.workerPods[:i], m.workerPods[i+1:]...)
+			}
 			break
 		}
+	}
+	if m.onDeletePod != nil {
+		m.onDeletePod()
 	}
 	return nil
 }
