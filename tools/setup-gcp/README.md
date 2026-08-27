@@ -79,15 +79,17 @@ go run ./tools/setup-gcp create cluster [flags]
 | `--subnetwork` | VPC subnetwork name. | `SUBNETWORK` | `default` |
 | `--machine-type` | Machine type for the gVisor node pool. | `GVISOR_NODE_MACHINE_TYPE` | `c3-standard-4` |
 
-**Node version labels:** `setup-gcp` does not set the `ate.dev/substrate-version`
-node label that the versioned dataplane (atelet DaemonSet, ateom worker pods)
-schedules on. `hack/install-ate.sh` labels the cluster's existing unlabeled
-nodes at install time; nodes that join afterwards (autoscaling, additional node
-pools) come up unlabeled and run no dataplane pods until labeled. Create
-additional pools with
+**Node version labels:** the versioned dataplane (atelet DaemonSet, ateom
+worker pods) schedules only to nodes labeled `ate.dev/substrate-version`.
+`hack/install-ate.sh` labels the cluster's existing unlabeled nodes at
+install time and, on GKE, stamps the label on the node pool through
+`setup-gcp pool set-version-label` so nodes that join later (autoscaling,
+resize, auto-repair) come up labeled. `setup-gcp pool` also has
+`get-autoscaling`/`set-autoscaling`, which the upgrade flow uses to park the
+autoscaler for the roll window; see `demos/upgrade-rolling/README.md`. For
+pools created outside these tools, use
 `gcloud container node-pools create ... --node-labels=ate.dev/substrate-version=<build version>`
-(the same pattern as the `ate.dev/sandboxClass` microvm pools), or label the
-nodes with `kubectl` after they join.
+(the same pattern as the `ate.dev/sandboxClass` microvm pools).
 
 ### 3. Create Bucket
 
