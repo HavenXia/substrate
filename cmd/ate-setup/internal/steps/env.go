@@ -57,6 +57,11 @@ type Env struct {
 	// ko is created lazily. Steps that only apply static manifests must work
 	// on a machine with no container registry credentials configured.
 	ko *ko.Runner
+
+	// substrateVersion caches the derived build version and its object-name
+	// suffix; see SubstrateVersion.
+	substrateVersion       string
+	substrateVersionSuffix string
 }
 
 // NewEnv connects to the cluster described by cfg.
