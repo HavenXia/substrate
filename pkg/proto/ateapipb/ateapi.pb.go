@@ -6150,21 +6150,19 @@ type MintJWTResponse struct {
 	//
 	// Claims:
 	//
-	//   - iss: Issuer - a valid URL where a relying party can fetch the OIDC
-	//     discovery documents.
-	//   - sub: Subject - a string expressing the identity carried in the
-	//
+	// * iss: Issuer - a valid URL where a relying party can fetch the OIDC
+	//   discovery documents.
+	// * sub: Subject - a string expressing the identity carried in the
 	// credential. Format
-	//
-	//	`atespaces:${atespace}:actors:${actorname}`.
-	//   - aud: Audience - a string identifying the service this token will be used
-	//     to authenticate to.
-	//   - nbf: Not Before - a numeric unix timestamp
-	//   - exp: Expiration - a numeric unix timestamp
-	//   - iat: Issued At - a numeric unix timestamp
-	//   - `ate.dev`: Ate/Substrate Extension - JSON object
-	//   - atespace: (string) The atespace the actor belongs to
-	//   - actorName: (string) The actor's name, unique within its atespace
+	//   `atespaces:${atespace}:actors:${actorname}`.
+	// * aud: Audience - a string identifying the service this token will be used
+	//   to authenticate to.
+	// * nbf: Not Before - a numeric unix timestamp
+	// * exp: Expiration - a numeric unix timestamp
+	// * iat: Issued At - a numeric unix timestamp
+	// * `ate.dev`: Ate/Substrate Extension - JSON object
+	//   * atespace: (string) The atespace the actor belongs to
+	//   * actorName: (string) The actor's name, unique within its atespace
 	ActorJwt      string `protobuf:"bytes,1,opt,name=actor_jwt,json=actorJwt,proto3" json:"actor_jwt,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
