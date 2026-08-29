@@ -223,6 +223,58 @@ default_postgres_connection_string() {
   echo "postgresql://postgres@postgres.ate-system.svc:5432/atepg?sslmode=verify-full&sslrootcert=/run/servicedns.podcert.ate.dev/trust-bundle.pem&sslcert=/run/podidentity.podcert.ate.dev/credential-bundle.pem&sslkey=/run/podidentity.podcert.ate.dev/credential-bundle.pem"
 }
 
+# --- Versioned dataplane rendering ---
+#
+# The atelet DaemonSet is keyed by substrate version (name suffix + nodeSelector on
+# the ate.dev/substrate-version node label) so a rolling upgrade can run two
+# daemonset on disjoint node sets.
+
+SUBSTRATE_VERSION=""
+SUBSTRATE_VERSION_SUFFIX=""
+
+ensure_substrate_version() {
+  if [[ -n "${SUBSTRATE_VERSION}" ]]; then
+    return 0
+  fi
+  local version_flag=""
+  version_flag="$(make -s ldflags | grep 'internal/version\.Version=' | head -n 1 || true)"
+  local version_raw="${version_flag#*internal/version.Version=}"
+  if [[ -z "${version_raw}" ]]; then
+    echo "error: could not read the build version from 'make ldflags'" >&2
+    return 1
+  fi
+  # Verify the build label is valid format and derive the version string and object suffix.
+  local derived=""
+  derived="$(go run ./internal/versionlabel/cmd "${version_raw}")" || return 1
+  SUBSTRATE_VERSION="${derived%% *}"
+  SUBSTRATE_VERSION_SUFFIX="${derived##* }"
+}
+
+atelet_daemonset_name() {
+  echo "atelet-${SUBSTRATE_VERSION_SUFFIX}"
+}
+
+# substitute_version fills the ${SUBSTRATE_VERSION}/${SUBSTRATE_VERSION_SUFFIX}
+# placeholders in a rendered manifest stream. It runs after kustomize and ko to replace.
+substitute_version() {
+  ensure_substrate_version
+  sed -e "s/: \${SUBSTRATE_VERSION}\$/: \"${SUBSTRATE_VERSION}\"/" \
+      -e "s/\${SUBSTRATE_VERSION}/${SUBSTRATE_VERSION}/g" \
+      -e "s/\${SUBSTRATE_VERSION_SUFFIX}/${SUBSTRATE_VERSION_SUFFIX}/g"
+}
+
+# label_nodes_substrate_version stamps ate.dev/substrate-version on every node
+# that does not carry it yet. The versioned atelet DaemonSet and worker pods
+# schedule only to nodes labeled with their substrate version.
+label_nodes_substrate_version() {
+  ensure_substrate_version
+  log_step "label_nodes_substrate_version (${SUBSTRATE_VERSION})"
+  local node=""
+  for node in $(run_kubectl get nodes -l '!ate.dev/substrate-version' -o name); do
+    run_kubectl label "${node}" "ate.dev/substrate-version=${SUBSTRATE_VERSION}"
+  done
+}
+
 render_ate_system_manifests() {
   local router=""
   router="$(atenet_router)"
@@ -232,16 +284,16 @@ render_ate_system_manifests() {
     if [[ "${ATE_INSTALL_KIND:-false}" == "true" ]]; then
       overlay="manifests/ate-install/kind-agentgateway"
     fi
-    kubectl kustomize "${overlay}" --load-restrictor LoadRestrictionsNone | run_ko resolve -f -
+    kubectl kustomize "${overlay}" --load-restrictor LoadRestrictionsNone | run_ko resolve -f - | substitute_version
     return
   fi
 
   if [[ "${ATE_INSTALL_KIND:-false}" == "true" ]]; then
     # Build everything resolved with Kustomize for Kind
-    kubectl kustomize manifests/ate-install/kind --load-restrictor LoadRestrictionsNone | run_ko resolve -f -
+    kubectl kustomize manifests/ate-install/kind --load-restrictor LoadRestrictionsNone | run_ko resolve -f - | substitute_version
   else
     # Build everything resolved with base manifests for GKE
-    run_ko resolve -f manifests/ate-install
+    run_ko resolve -f manifests/ate-install | substitute_version
   fi
 }
 
@@ -359,10 +411,16 @@ apply_otel_endpoint_override() {
 
   local workload
   for workload in deployment/ate-api-server deployment/ate-controller \
-                  deployment/atenet-router daemonset/atelet; do
+                  deployment/atenet-router; do
     if run_kubectl -n ate-system get "${workload}" >/dev/null 2>&1; then
       run_kubectl -n ate-system rollout restart "${workload}"
     fi
+  done
+  # atelet DaemonSet names carry a version suffix; restart whichever versions
+  # are installed.
+  local ds=""
+  for ds in $(run_kubectl -n ate-system get daemonset -l app=atelet -o name 2>/dev/null); do
+    run_kubectl -n ate-system rollout restart "${ds}"
   done
 }
 
@@ -555,9 +613,16 @@ setup_csi() {
 
 deploy_ate_system() {
   log_step "deploy_ate_system"
+  # Fail fast on an unusable build version before touching the cluster.
+  ensure_substrate_version
+
   # Ensure namespace exists before applying RBAC or CRDs
   run_kubectl apply -f manifests/ate-install/ate-system-namespace.yaml \
     && run_kubectl wait --for=jsonpath='{.status.phase}'=Active namespace/ate-system --timeout=60s
+
+  # The atelet DaemonSet applied below and the demo WorkerPools' worker pods
+  # schedule only to version-labeled nodes.
+  label_nodes_substrate_version
 
   # Not ensure_crds: its existence check skips upgrades, stranding stale CRD
   # schemas and RBAC (role.yaml has no other apply path).
@@ -618,7 +683,7 @@ deploy_ate_system() {
   run_kubectl rollout status deployment/ate-controller -n ate-system --timeout="$(rollout_timeout)"
   run_kubectl rollout status deployment/atenet-router -n ate-system --timeout="$(rollout_timeout)"
   run_kubectl rollout status deployment/atenet-egress -n ate-system --timeout="$(rollout_timeout)"
-  run_kubectl rollout status daemonset/atelet -n ate-system --timeout="$(rollout_timeout)"
+  run_kubectl rollout status "daemonset/$(atelet_daemonset_name)" -n ate-system --timeout="$(rollout_timeout)"
 
   # After the bundle, which carries its own copy of ate-otel-config.
   apply_otel_endpoint_override
@@ -661,25 +726,27 @@ deploy_ate_apiserver() {
 
 deploy_atelet() {
   log_step "deploy_atelet"
+  ensure_substrate_version
   ensure_crds
 
   # Ensure namespace exists
   run_kubectl apply -f manifests/ate-install/ate-system-namespace.yaml \
     && run_kubectl wait --for=jsonpath='{.status.phase}'=Active namespace/ate-system --timeout=60s
 
+  label_nodes_substrate_version
   apply_otel_config
   apply_otel_endpoint_override
 
   local manifest=""
   if [[ "${ATE_INSTALL_KIND:-false}" == "true" ]]; then
     # Use Kustomize to build and resolve the atelet DaemonSet patch
-    manifest=$(kubectl kustomize manifests/ate-install/kind/atelet --load-restrictor LoadRestrictionsNone | run_ko resolve -f -)
+    manifest=$(kubectl kustomize manifests/ate-install/kind/atelet --load-restrictor LoadRestrictionsNone | run_ko resolve -f - | substitute_version)
   else
     # Use base manifest for GKE
-    manifest=$(run_ko resolve -f manifests/ate-install/atelet.yaml)
+    manifest=$(run_ko resolve -f manifests/ate-install/atelet.yaml | substitute_version)
   fi
   echo "${manifest}" | run_kubectl apply -f -
-  run_kubectl rollout status daemonset/atelet -n ate-system --timeout="$(rollout_timeout)"
+  run_kubectl rollout status "daemonset/$(atelet_daemonset_name)" -n ate-system --timeout="$(rollout_timeout)"
 }
 
 deploy_atenet() {
@@ -886,10 +953,13 @@ delete_ate_system() {
   else
     run_kubectl delete --ignore-not-found -f manifests/ate-install
   fi
+
+  run_kubectl delete --ignore-not-found -n ate-system daemonset -l app=atelet
   run_kubectl delete --ignore-not-found \
     -f manifests/ate-install/components/agentgateway/configmap.yaml
   run_kubectl delete --ignore-not-found -f manifests/ate-install/postgres.yaml
   run_kubectl delete --ignore-not-found -f manifests/ate-install/generated
+  run_kubectl label nodes -l ate.dev/substrate-version ate.dev/substrate-version-
 }
 
 delete_atenet() {
