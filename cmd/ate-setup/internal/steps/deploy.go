@@ -56,8 +56,19 @@ type DeployOptions struct {
 func (e *Env) DeployAteSystem(ctx context.Context, opts DeployOptions) error {
 	log.Step("deploy_ate_system")
 
+	// Fail fast on an unusable build version before touching the cluster.
+	if _, _, err := e.SubstrateVersion(); err != nil {
+		return err
+	}
+
 	// The namespace has to exist before RBAC or CRDs are applied.
 	if err := e.EnsureAteSystemNamespace(ctx); err != nil {
+		return err
+	}
+
+	// Before the bundle: the atelet DaemonSet applied below and the demo
+	// WorkerPools' version-pinned pods schedule only to version-labeled nodes.
+	if err := e.LabelNodesSubstrateVersion(ctx); err != nil {
 		return err
 	}
 
@@ -120,6 +131,12 @@ func (e *Env) DeployAteSystem(ctx context.Context, opts DeployOptions) error {
 	if err != nil {
 		return err
 	}
+	// The atelet DaemonSet in the bundle is version-keyed; fill its
+	// placeholders after the render (kustomize and ko pass them through).
+	manifests, err = e.SubstituteVersion(manifests)
+	if err != nil {
+		return err
+	}
 	if err := e.Kube.ApplyBytes(ctx, manifests); err != nil {
 		return err
 	}
@@ -132,6 +149,10 @@ func (e *Env) DeployAteSystem(ctx context.Context, opts DeployOptions) error {
 		return err
 	}
 
+	ateletName, err := e.AteletDaemonSetName()
+	if err != nil {
+		return err
+	}
 	log.Step("Waiting for ATE system components to be ready...")
 	for _, w := range []struct{ kind, name string }{
 		{kube.KindStatefulSet, "postgres"},
@@ -139,7 +160,7 @@ func (e *Env) DeployAteSystem(ctx context.Context, opts DeployOptions) error {
 		{kube.KindDeployment, "ate-controller"},
 		{kube.KindDeployment, "atenet-router"},
 		{kube.KindDeployment, "atenet-egress"},
-		{kube.KindDaemonSet, "atelet"},
+		{kube.KindDaemonSet, ateletName},
 	} {
 		if err := e.Kube.RolloutStatus(ctx, w.kind, NamespaceAteSystem, w.name, e.Cfg.RolloutTimeout); err != nil {
 			return err
@@ -223,6 +244,9 @@ func (e *Env) DeployAtelet(ctx context.Context) error {
 	if err := e.EnsureAteSystemNamespace(ctx); err != nil {
 		return err
 	}
+	if err := e.LabelNodesSubstrateVersion(ctx); err != nil {
+		return err
+	}
 	if err := e.applyOtelConfig(ctx); err != nil {
 		return err
 	}
@@ -238,10 +262,18 @@ func (e *Env) DeployAtelet(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	manifest, err = e.SubstituteVersion(manifest)
+	if err != nil {
+		return err
+	}
 	if err := e.Kube.ApplyBytes(ctx, manifest); err != nil {
 		return err
 	}
-	return e.Kube.RolloutStatus(ctx, kube.KindDaemonSet, NamespaceAteSystem, "atelet", e.Cfg.RolloutTimeout)
+	ateletName, err := e.AteletDaemonSetName()
+	if err != nil {
+		return err
+	}
+	return e.Kube.RolloutStatus(ctx, kube.KindDaemonSet, NamespaceAteSystem, ateletName, e.Cfg.RolloutTimeout)
 }
 
 // DeployAtenet redeploys the atenet dataplane: router, egress, and DNS.

@@ -122,17 +122,17 @@ func (r *Runner) ResolveBytes(ctx context.Context, manifest []byte) ([]byte, err
 // scripts shelled out to `make ldflags` for this; computing it here keeps the
 // value identical without depending on make.
 func (r *Runner) ldflags() []string {
-	return []string{fmt.Sprintf("-X=%s.Version=%s", versionPkg, r.version())}
+	return []string{fmt.Sprintf("-X=%s.Version=%s", versionPkg, BuildVersion(r.Root))}
 }
 
-// version mirrors the Makefile's VERSION: `git describe`, or "dev" when git
-// has nothing to say.
-func (r *Runner) version() string {
+// BuildVersion mirrors the Makefile's VERSION: `git describe`, or "dev" when
+// git has nothing to say. It is what ko stamps into the binaries.
+func BuildVersion(root string) string {
 	if v := os.Getenv("VERSION"); v != "" {
 		return v
 	}
 	cmd := exec.Command("git", "describe", "--tags", "--always", "--dirty")
-	cmd.Dir = r.Root
+	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {
 		return "dev"
