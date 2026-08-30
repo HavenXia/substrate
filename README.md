@@ -221,6 +221,7 @@ We provide several sample applications demonstrating Agent Substrate's capabilit
 * [Observability Guide](docs/observability.md): Guide to actor logging, metrics, and distributed tracing.
 * [Authentication Guide](docs/authentication.md): Configure trusted JWT providers and human credentials.
 * [Request Parking](docs/request-parking.md): How the router parks requests through transient worker-pool saturation.
+* [Rolling Upgrade Runbook](docs/upgrade.md): Upgrade a running substrate node by node without losing actor state.
 * [Threat Model](docs/threat-model.md): Trust boundaries, assumptions, and known risks.
 * [Roadmap](docs/roadmap.md): Current limitations and what is planned next.
 * [Benchmarking Guide](benchmarking/README.md): Locust-based load tests, monitoring stack, and the orchestrated benchmark harness.
