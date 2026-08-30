@@ -88,6 +88,7 @@ function usage() {
   echo ""
   echo "  --deploy-atelet                        Deploy atelet only"
   echo "  --deploy-ate-apiserver                 Deploy ate-api-server only"
+  echo "  --publish-worker-images                Build and push the ateom images for this build; print their refs (see docs/upgrade.md)"
   echo "  --deploy-atenet                        Deploy atenet only"
   echo ""
   echo "To create individual resources used by ate-system (Note: These are"
@@ -609,6 +610,21 @@ setup_csi() {
   log_step "setup_csi"
   "${ROOT}/hack/setup-csi-hostpath-kind.sh"
   "${ROOT}/hack/setup-csi-nfs-kind.sh"
+}
+
+# publish_worker_images builds and pushes the ateom images for this build and
+# prints their pushed refs, one "<binary>: <ref>" line per image. This is the
+# ref a WorkerPool edit needs to move a pool to this build (docs/upgrade.md);
+# normal installs never need it because ko resolve publishes the images as a
+# side effect of applying a manifest that references them.
+publish_worker_images() {
+  ensure_substrate_version
+  log_step "publish_worker_images (${SUBSTRATE_VERSION})"
+  local img="" ref=""
+  for img in ateom-gvisor ateom-microvm; do
+    ref="$(run_ko build "./cmd/${img}" | tail -n 1)"
+    echo "${img}: ${ref}"
+  done
 }
 
 deploy_ate_system() {
@@ -1285,6 +1301,7 @@ while [[ "$#" -gt 0 ]]; do
 
     --deploy-atelet) deploy_atelet ;;
     --deploy-ate-apiserver) deploy_ate_apiserver ;;
+    --publish-worker-images) publish_worker_images ;;
 
     --deploy-atenet) deploy_atenet ;;
     --delete-atenet) delete_atenet ;;
