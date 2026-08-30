@@ -49,6 +49,15 @@ apiserver, the controller, atenet, and atelet. It creates every `create`
 resource below on the way, so those subcommands are only needed to redo one on
 a running cluster.
 
+## Publish
+
+| `ate-setup` | `hack/install-ate.sh` |
+|---|---|
+| `publish worker-images` | (no shell equivalent) |
+
+Builds and pushes the ateom worker images for the checked-out build and prints
+their refs; a WorkerPool points `spec.workerImage` to a build to use the ateom.
+
 ## Delete
 
 | `ate-setup` | `hack/install-ate.sh` |
