@@ -60,6 +60,7 @@ demo-counter_deploy() {
       "${ext_vol_mount_cmd[@]}" \
       "${ext_vol_spec_cmd[@]}" \
       demos/counter/counter.yaml.tmpl \
+    | substitute_version \
     | run_ko apply -f -
 
   # Wait for the demo to be fully ready before returning. On a cold cluster the
@@ -81,5 +82,6 @@ demo-counter_delete() {
       -e "/\${EXTERNAL_VOLUME_MOUNTS}/d" \
       -e "/\${EXTERNAL_VOLUMES}/d" \
       demos/counter/counter.yaml.tmpl \
+    | substitute_version \
     | run_kubectl delete --ignore-not-found -f -
 }

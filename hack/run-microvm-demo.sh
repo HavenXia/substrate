@@ -143,7 +143,13 @@ fi
 # is used as-is — no override). Only ko apply/create/delete/run accept args after
 # `--`; thread --context there (mirrors the run_ko helper in hack/install-ate.sh).
 log "Applying the counter-microvm demo manifest..."
+# The pool template pins workers to version-labeled nodes; resolve the pin
+# the same way install-ate.sh does (one true implementation in
+# internal/versionlabel).
+SUBSTRATE_VERSION="$( { make -s ldflags | grep 'internal/version\.Version=' | head -n 1 | sed 's/.*internal\/version.Version=//' ; } )"
+SUBSTRATE_VERSION="$(go run ./internal/versionlabel/cmd "${SUBSTRATE_VERSION}" | cut -d' ' -f1)"
 sed -e "s|\${BUCKET_NAME}|${BUCKET_NAME}|g" \
+    -e "s|\${SUBSTRATE_VERSION}|${SUBSTRATE_VERSION}|g" \
     demos/counter/counter-microvm.yaml.tmpl \
   | ./hack/run-tool.sh ko apply -f - ${KUBECTL_CONTEXT:+-- --context="${KUBECTL_CONTEXT}"}
 

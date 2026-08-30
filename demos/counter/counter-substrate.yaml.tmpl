@@ -36,6 +36,8 @@ spec:
   replicas: 2
   workerImage: ko://github.com/agent-substrate/substrate/cmd/ateom-gvisor
   template:
+    nodeSelector:
+      ate.dev/substrate-version: "${SUBSTRATE_VERSION}"
     # Per-worker resources; the sandbox itself is sized by the ActorTemplate's
     # resources (see internal/sizing and counter.yaml.tmpl for the rationale).
     resources:

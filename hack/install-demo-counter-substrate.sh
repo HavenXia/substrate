@@ -87,6 +87,7 @@ demo-counter-substrate_deploy_variant() {
   ensure_crds
 
   sed -e "s|\${BUCKET_NAME}|${BUCKET_NAME}|g" "${pool_manifest}" \
+    | substitute_version \
     | run_ko apply -f -
 
   log_step "Waiting for the ${pool} worker pool rollout..."
@@ -137,5 +138,6 @@ demo-counter-substrate_delete_variant() {
     || log_step "atespace ${atespace} not deleted (may not exist or is not empty)"
 
   sed -e "s|\${BUCKET_NAME}|${BUCKET_NAME}|g" "${pool_manifest}" \
+    | substitute_version \
     | run_kubectl delete --ignore-not-found -f -
 }

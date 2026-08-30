@@ -41,6 +41,8 @@ spec:
   sandboxConfigName: microvm
   workerImage: ko://github.com/agent-substrate/substrate/cmd/ateom-microvm
   template:
+    nodeSelector:
+      ate.dev/substrate-version: "${SUBSTRATE_VERSION}"
     # Per-worker resources; the micro-VM sandbox is sized by the ActorTemplate's
     # resources, which must leave VMM-reserve headroom under this memory limit
     # (see internal/sizing and counter-microvm.yaml.tmpl for the rationale).
