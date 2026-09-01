@@ -234,6 +234,29 @@ func (e *Env) DeployAteAPIServer(ctx context.Context) error {
 	return e.Kube.RolloutStatus(ctx, kube.KindDeployment, NamespaceAteSystem, "ate-api-server", e.Cfg.RolloutTimeout)
 }
 
+// DeployAteController redeploys only ate-controller. A rolling upgrade
+// starts here: the controller is the dataplane's controller, so it moves to
+// the new build before the dataplane rolls, and the rest of the control
+// plane follows after. CRDs deploy with it (not Ensure: the new controller
+// may rely on schema the installed CRDs predate).
+func (e *Env) DeployAteController(ctx context.Context) error {
+	log.Step("deploy_ate_controller")
+
+	if err := e.DeployCRDs(ctx); err != nil {
+		return err
+	}
+	if err := e.EnsureAteSystemNamespace(ctx); err != nil {
+		return err
+	}
+	if err := e.applyOtelConfig(ctx); err != nil {
+		return err
+	}
+	if err := e.KoApply(ctx, e.Cfg.Manifest("ate-controller.yaml")); err != nil {
+		return err
+	}
+	return e.Kube.RolloutStatus(ctx, kube.KindDeployment, NamespaceAteSystem, "ate-controller", e.Cfg.RolloutTimeout)
+}
+
 // DeployAtelet redeploys only the atelet DaemonSet.
 func (e *Env) DeployAtelet(ctx context.Context) error {
 	log.Step("deploy_atelet")
