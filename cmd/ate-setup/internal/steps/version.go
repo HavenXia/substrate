@@ -48,7 +48,9 @@ func (e *Env) SubstrateVersion() (version, suffix string, err error) {
 	if e.Cfg.Images.IsPrebuilt() {
 		raw = os.Getenv("VERSION")
 		if raw == "" {
-			raw = e.Cfg.Images.Tag
+			// The tag may carry its digest (v1@sha256:...); the version
+			// is the tag alone.
+			raw, _, _ = strings.Cut(e.Cfg.Images.Tag, "@")
 		}
 	} else {
 		// ko.BuildVersion consults VERSION itself before `git describe`.

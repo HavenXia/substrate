@@ -38,6 +38,11 @@ func TestSubstrateVersionPrebuilt(t *testing.T) {
 		want:       "v0.0.0-503-4b3423c0",
 		wantSuffix: "v0-0-0-503-4b3423c0",
 	}, {
+		name:       "a tag carrying its digest is the version without it",
+		source:     images.Source{Repo: "example.com/substrate", Tag: "v0.0.0@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+		want:       "v0.0.0",
+		wantSuffix: "v0-0-0",
+	}, {
 		name:       "built from source falls back to git",
 		source:     images.Source{},
 		want:       "dev",
