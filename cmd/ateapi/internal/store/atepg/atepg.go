@@ -214,6 +214,12 @@ type querier interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
+// unmarshalStored decodes a stored proto, dropping fields this binary has no
+// descriptor for. This means a newer replica can have written such a field.
+func unmarshalStored(b []byte, m proto.Message) error {
+	return proto.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(b, m)
+}
+
 // TODO: EOL this in favor of setCreateMetadata
 func newCreateMetadata(atespace, name string) *ateapipb.ResourceMetadata {
 	now := timestamppb.Now()
@@ -328,7 +334,7 @@ func (p *Persistence) GetAtespace(ctx context.Context, name string) (*ateapipb.A
 		return nil, fmt.Errorf("getting atespace %q: %w", name, err)
 	}
 	out := &ateapipb.Atespace{}
-	if err := proto.Unmarshal(protoBytes, out); err != nil {
+	if err := unmarshalStored(protoBytes, out); err != nil {
 		return nil, fmt.Errorf("unmarshaling atespace: %w", err)
 	}
 	return out, nil
@@ -368,7 +374,7 @@ func (p *Persistence) ListAtespaces(ctx context.Context, opts store.ListOptions)
 			return store.ListResponse[*ateapipb.Atespace]{}, fmt.Errorf("scanning atespace row: %w", err)
 		}
 		a := &ateapipb.Atespace{}
-		if err := proto.Unmarshal(protoBytes, a); err != nil {
+		if err := unmarshalStored(protoBytes, a); err != nil {
 			return store.ListResponse[*ateapipb.Atespace]{}, fmt.Errorf("unmarshaling atespace: %w", err)
 		}
 		result = append(result, a)
@@ -399,7 +405,7 @@ func (p *Persistence) DeleteAtespace(ctx context.Context, name string) (*ateapip
 		return nil, fmt.Errorf("deleting atespace %q: %w", name, err)
 	}
 	out := &ateapipb.Atespace{}
-	if err := proto.Unmarshal(protoBytes, out); err != nil {
+	if err := unmarshalStored(protoBytes, out); err != nil {
 		return nil, fmt.Errorf("unmarshaling deleted atespace: %w", err)
 	}
 	return out, nil
@@ -444,7 +450,7 @@ func (p *Persistence) GetActorTemplate(ctx context.Context, templateRef resource
 		return nil, fmt.Errorf("getting actor template %s: %w", templateRef, err)
 	}
 	out := &ateapipb.ActorTemplate{}
-	if err := proto.Unmarshal(protoBytes, out); err != nil {
+	if err := unmarshalStored(protoBytes, out); err != nil {
 		return nil, fmt.Errorf("unmarshaling actor template: %w", err)
 	}
 	return out, nil
@@ -477,7 +483,7 @@ func (p *Persistence) UpdateActorTemplate(ctx context.Context, templateRef resou
 	}
 
 	dbTemplate := &ateapipb.ActorTemplate{}
-	if err := proto.Unmarshal(currentBytes, dbTemplate); err != nil {
+	if err := unmarshalStored(currentBytes, dbTemplate); err != nil {
 		return nil, fmt.Errorf("unmarshaling actor template for update: %w", err)
 	}
 	if err := validateProtoMetadataMatchesColumns("actor template "+templateRef.String(), dbTemplate.GetMetadata(), currentUID, currentVersion); err != nil {
@@ -567,7 +573,7 @@ func (p *Persistence) ListActorTemplates(ctx context.Context, atespace string, o
 			return store.ListResponse[*ateapipb.ActorTemplate]{}, fmt.Errorf("scanning actor template row: %w", err)
 		}
 		template := &ateapipb.ActorTemplate{}
-		if err := proto.Unmarshal(protoBytes, template); err != nil {
+		if err := unmarshalStored(protoBytes, template); err != nil {
 			return store.ListResponse[*ateapipb.ActorTemplate]{}, fmt.Errorf("unmarshaling actor template: %w", err)
 		}
 		keys = append(keys, k)
@@ -602,7 +608,7 @@ func (p *Persistence) DeleteActorTemplate(ctx context.Context, templateRef resou
 		return nil, fmt.Errorf("deleting actor template %s: %w", templateRef, err)
 	}
 	out := &ateapipb.ActorTemplate{}
-	if err := proto.Unmarshal(protoBytes, out); err != nil {
+	if err := unmarshalStored(protoBytes, out); err != nil {
 		return nil, fmt.Errorf("unmarshaling deleted actor template: %w", err)
 	}
 	return out, nil
@@ -654,7 +660,7 @@ func (p *Persistence) GetActor(ctx context.Context, actorRef resources.ActorRef)
 		return nil, fmt.Errorf("getting actor %s/%s: %w", actorRef.Atespace, actorRef.Name, err)
 	}
 	out := &ateapipb.Actor{}
-	if err := proto.Unmarshal(protoBytes, out); err != nil {
+	if err := unmarshalStored(protoBytes, out); err != nil {
 		return nil, fmt.Errorf("unmarshaling actor: %w", err)
 	}
 	return out, nil
@@ -678,7 +684,7 @@ func (p *Persistence) UpdateActor(ctx context.Context, actorRef resources.ActorR
 	}
 
 	dbActor := &ateapipb.Actor{}
-	if err := proto.Unmarshal(currentBytes, dbActor); err != nil {
+	if err := unmarshalStored(currentBytes, dbActor); err != nil {
 		return nil, fmt.Errorf("unmarshaling actor for update: %w", err)
 	}
 	if err := validateProtoMetadataMatchesColumns("actor "+actorRef.String(), dbActor.GetMetadata(), currentUID, currentVersion); err != nil {
@@ -739,7 +745,7 @@ func (p *Persistence) DeleteActor(ctx context.Context, actorRef resources.ActorR
 	}
 
 	out := &ateapipb.Actor{}
-	if err := proto.Unmarshal(protoBytes, out); err != nil {
+	if err := unmarshalStored(protoBytes, out); err != nil {
 		return nil, fmt.Errorf("unmarshaling actor for deletion: %w", err)
 	}
 	if out.GetStatus().GetState() != ateapipb.ActorState_ACTOR_STATE_DELETING {
@@ -801,7 +807,7 @@ func (p *Persistence) listActorsScoped(ctx context.Context, atespace string, pag
 			return nil, "", fmt.Errorf("scanning actor row: %w", err)
 		}
 		a := &ateapipb.Actor{}
-		if err := proto.Unmarshal(protoBytes, a); err != nil {
+		if err := unmarshalStored(protoBytes, a); err != nil {
 			return nil, "", fmt.Errorf("unmarshaling actor: %w", err)
 		}
 		result = append(result, a)
@@ -849,7 +855,7 @@ func (p *Persistence) listActorsGlobal(ctx context.Context, pageSize int32, page
 			return nil, "", fmt.Errorf("scanning actor row: %w", err)
 		}
 		a := &ateapipb.Actor{}
-		if err := proto.Unmarshal(protoBytes, a); err != nil {
+		if err := unmarshalStored(protoBytes, a); err != nil {
 			return nil, "", fmt.Errorf("unmarshaling actor: %w", err)
 		}
 		result = append(result, a)
@@ -971,7 +977,7 @@ func getEgressPolicyRow(ctx context.Context, q querier, query string, args ...an
 
 func unmarshalEgressPolicy(uid string, version int64, protoBytes []byte) (*ateapipb.EgressPolicy, error) {
 	policy := &ateapipb.EgressPolicy{}
-	if err := proto.Unmarshal(protoBytes, policy); err != nil {
+	if err := unmarshalStored(protoBytes, policy); err != nil {
 		return nil, fmt.Errorf("unmarshaling egress policy: %w", err)
 	}
 	if err := validateProtoMetadataMatchesColumns("egress policy", policy.GetMetadata(), uid, version); err != nil {
@@ -1016,7 +1022,7 @@ func (p *Persistence) GetActorSnapshot(ctx context.Context, snapshotRef resource
 		return nil, fmt.Errorf("getting actor snapshot %s/%s: %w", atespace, name, err)
 	}
 	out := &ateapipb.ActorSnapshot{}
-	if err := proto.Unmarshal(protoBytes, out); err != nil {
+	if err := unmarshalStored(protoBytes, out); err != nil {
 		return nil, fmt.Errorf("unmarshaling actor snapshot: %w", err)
 	}
 	return out, nil
@@ -1034,7 +1040,7 @@ func (p *Persistence) GetActorSnapshotTag(ctx context.Context, tagRef resources.
 		return nil, fmt.Errorf("getting actor snapshot tag %s/%s: %w", atespace, name, err)
 	}
 	tag := &ateapipb.ActorSnapshotTag{}
-	if err := proto.Unmarshal(protoBytes, tag); err != nil {
+	if err := unmarshalStored(protoBytes, tag); err != nil {
 		return nil, fmt.Errorf("unmarshaling actor snapshot tag: %w", err)
 	}
 	return tag, nil
@@ -1086,7 +1092,7 @@ func (p *Persistence) listActorSnapshotsScoped(ctx context.Context, atespace str
 			return nil, "", fmt.Errorf("scanning actor snapshot row: %w", err)
 		}
 		snapshot := &ateapipb.ActorSnapshot{}
-		if err := proto.Unmarshal(protoBytes, snapshot); err != nil {
+		if err := unmarshalStored(protoBytes, snapshot); err != nil {
 			return nil, "", fmt.Errorf("unmarshaling actor snapshot: %w", err)
 		}
 		result = append(result, snapshot)
@@ -1132,7 +1138,7 @@ func (p *Persistence) listActorSnapshotsGlobal(ctx context.Context, pageSize int
 			return nil, "", fmt.Errorf("scanning actor snapshot row: %w", err)
 		}
 		snapshot := &ateapipb.ActorSnapshot{}
-		if err := proto.Unmarshal(protoBytes, snapshot); err != nil {
+		if err := unmarshalStored(protoBytes, snapshot); err != nil {
 			return nil, "", fmt.Errorf("unmarshaling actor snapshot: %w", err)
 		}
 		result = append(result, snapshot)
@@ -1202,7 +1208,7 @@ func (p *Persistence) CreateActorSnapshotTag(ctx context.Context, snapshotRef re
 		return nil, fmt.Errorf("getting existing actor snapshot tag %s/%s: %w", tagAtespace, tagName, err)
 	}
 	existing := &ateapipb.ActorSnapshotTag{}
-	if err := proto.Unmarshal(existingBytes, existing); err != nil {
+	if err := unmarshalStored(existingBytes, existing); err != nil {
 		return nil, fmt.Errorf("unmarshaling actor snapshot tag: %w", err)
 	}
 	if existing.GetSnapshot().GetAtespace() != snapshotAtespace || existing.GetSnapshot().GetName() != snapshotName || existing.GetScope() != tag.GetScope() {
@@ -1248,7 +1254,7 @@ func (p *Persistence) UpdateActorSnapshotTag(ctx context.Context, tagRef resourc
 	}
 
 	dbTag := &ateapipb.ActorSnapshotTag{}
-	if err := proto.Unmarshal(currentBytes, dbTag); err != nil {
+	if err := unmarshalStored(currentBytes, dbTag); err != nil {
 		return nil, fmt.Errorf("unmarshaling actor snapshot tag: %w", err)
 	}
 	if err := validateProtoMetadataMatchesColumns(fmt.Sprintf("actor snapshot tag %s/%s", atespace, name), dbTag.GetMetadata(), currentUID, currentVersion); err != nil {
@@ -1302,7 +1308,7 @@ func (p *Persistence) DeleteActorSnapshotTag(ctx context.Context, tagRef resourc
 		return nil, fmt.Errorf("deleting actor snapshot tag %s/%s: %w", atespace, name, err)
 	}
 	tag := &ateapipb.ActorSnapshotTag{}
-	if err := proto.Unmarshal(protoBytes, tag); err != nil {
+	if err := unmarshalStored(protoBytes, tag); err != nil {
 		return nil, fmt.Errorf("unmarshaling deleted actor snapshot tag: %w", err)
 	}
 	return tag, nil
@@ -1351,7 +1357,7 @@ func getWorkerRow(ctx context.Context, q querier, name string) (*ateapipb.Worker
 		return nil, fmt.Errorf("getting worker %s: %w", name, err)
 	}
 	out := &ateapipb.Worker{}
-	if err := proto.Unmarshal(protoBytes, out); err != nil {
+	if err := unmarshalStored(protoBytes, out); err != nil {
 		return nil, fmt.Errorf("unmarshaling worker: %w", err)
 	}
 	return out, nil
@@ -1373,7 +1379,7 @@ func getWorkerRowForUpdate(ctx context.Context, tx pgx.Tx, name string) (*ateapi
 		return nil, fmt.Errorf("locking worker %s for update: %w", name, err)
 	}
 	out := &ateapipb.Worker{}
-	if err := proto.Unmarshal(protoBytes, out); err != nil {
+	if err := unmarshalStored(protoBytes, out); err != nil {
 		return nil, fmt.Errorf("unmarshaling worker: %w", err)
 	}
 	return out, nil
@@ -1484,7 +1490,7 @@ func (p *Persistence) ListWorkers(ctx context.Context, opts store.ListOptions) (
 			return store.ListResponse[*ateapipb.Worker]{}, fmt.Errorf("scanning worker row: %w", err)
 		}
 		w := &ateapipb.Worker{}
-		if err := proto.Unmarshal(protoBytes, w); err != nil {
+		if err := unmarshalStored(protoBytes, w); err != nil {
 			return store.ListResponse[*ateapipb.Worker]{}, fmt.Errorf("unmarshaling worker: %w", err)
 		}
 		result = append(result, w)

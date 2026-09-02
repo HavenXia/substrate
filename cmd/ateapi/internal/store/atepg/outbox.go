@@ -59,8 +59,8 @@ func unmarshalWorkerEvent(payload []byte) (store.WorkerEvent, error) {
 		return store.WorkerEvent{}, fmt.Errorf("unknown worker event type byte %d", payload[0])
 	}
 	worker := &ateapipb.Worker{}
-	if err := proto.Unmarshal(payload[1:], worker); err != nil {
-		return store.WorkerEvent{}, fmt.Errorf("in proto.Unmarshal: %w", err)
+	if err := unmarshalStored(payload[1:], worker); err != nil {
+		return store.WorkerEvent{}, fmt.Errorf("in unmarshalStored: %w", err)
 	}
 	if worker.GetMetadata().GetName() == "" {
 		return store.WorkerEvent{}, fmt.Errorf("worker event payload has no worker name")
