@@ -79,7 +79,8 @@ demo-counter_render() {
       "${validate_cmd[@]}" \
       "${ext_vol_mount_cmd[@]}" \
       "${ext_vol_spec_cmd[@]}" \
-      "${manifest}"
+      "${manifest}" \
+    | substitute_version
 }
 
 # Wrappers in the helpers' one-argument <render_fn> shape.

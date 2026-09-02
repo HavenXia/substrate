@@ -949,9 +949,10 @@ wait_actortemplate_ready() {
 # API. The pool's k8s namespace doubles as the atespace unless a demo says
 # otherwise; <render_fn> turns a manifest path into YAML on stdout.
 
-# render_demo_manifest substitutes ${BUCKET_NAME} in a manifest.
+# render_demo_manifest substitutes ${BUCKET_NAME} and the version
+# placeholders in a manifest.
 render_demo_manifest() {
-  sed -e "s|\${BUCKET_NAME}|${BUCKET_NAME}|g" "$1"
+  sed -e "s|\${BUCKET_NAME}|${BUCKET_NAME}|g" "$1" | substitute_version
 }
 
 # ensure_atespace creates the atespace if it does not already exist. The
