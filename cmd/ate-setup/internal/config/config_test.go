@@ -41,6 +41,7 @@ func loadEnv(t *testing.T) {
 		"ANTHROPIC_API_KEY",
 		"ATE_ADDITIONAL_EGRESS_EXTPROC_SERVICE",
 		"ATE_API_POSTGRES_CONNECTION_STRING",
+		"ATE_API_POSTGRES_SCHEMA",
 		"ATE_ATENET_ROUTER",
 		"ATE_EXPERIMENTAL_USE_SDSMINT",
 		"ATE_IMAGE_REPO",
@@ -112,6 +113,28 @@ func TestLoadPostgresConnectionStringOverride(t *testing.T) {
 	}
 	if cfg.PostgresConnString() != dsn {
 		t.Errorf("PostgresConnString() = %q, want %q", cfg.PostgresConnString(), dsn)
+	}
+}
+
+// ATE_API_POSTGRES_SCHEMA defaults to public, as in the shell installer, and
+// an explicit value wins.
+func TestLoadPostgresSchema(t *testing.T) {
+	loadEnv(t)
+	cfg, err := Load(Options{})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.PostgresSchemaName() != DefaultPostgresSchema {
+		t.Errorf("PostgresSchemaName() = %q, want %q", cfg.PostgresSchemaName(), DefaultPostgresSchema)
+	}
+
+	t.Setenv("ATE_API_POSTGRES_SCHEMA", "substrate")
+	cfg, err = Load(Options{})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.PostgresSchemaName() != "substrate" {
+		t.Errorf("PostgresSchemaName() = %q, want %q", cfg.PostgresSchemaName(), "substrate")
 	}
 }
 

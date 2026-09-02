@@ -49,6 +49,10 @@ const DefaultRolloutTimeout = 60 * time.Second
 // podidentity credential bundle.
 const DefaultPostgresConnectionString = "postgresql://postgres@postgres.ate-system.svc:5432/atepg?sslmode=verify-full&sslrootcert=/run/servicedns.podcert.ate.dev/trust-bundle.pem&sslcert=/run/podidentity.podcert.ate.dev/credential-bundle.pem&sslkey=/run/podidentity.podcert.ate.dev/credential-bundle.pem"
 
+// DefaultPostgresSchema mirrors the shell installer's default for
+// ATE_API_POSTGRES_SCHEMA, the PostgreSQL schema holding the Substrate tables.
+const DefaultPostgresSchema = "public"
+
 // devEnvFile is the optional per-developer environment script at the repo root.
 const devEnvFile = ".ate-dev-env.sh"
 
@@ -96,6 +100,9 @@ type Config struct {
 	// PostgresConnectionString is the apiserver's store connection string.
 	// Empty means use DefaultPostgresConnectionString.
 	PostgresConnectionString string
+	// PostgresSchema is the PostgreSQL schema for the Substrate tables
+	// (ATE_API_POSTGRES_SCHEMA). Empty means DefaultPostgresSchema.
+	PostgresSchema string
 
 	// RolloutTimeout is the timeout duration for rollout status checks.
 	RolloutTimeout time.Duration
@@ -214,6 +221,7 @@ func Load(opts Options) (*Config, error) {
 		KODefaultPlatforms:             env["KO_DEFAULTPLATFORMS"],
 		Images:                         loadImageSource(opts, env),
 		PostgresConnectionString:       env["ATE_API_POSTGRES_CONNECTION_STRING"],
+		PostgresSchema:                 env["ATE_API_POSTGRES_SCHEMA"],
 		RolloutTimeout:                 rolloutTimeout,
 		rolloutTimeoutSet:              timeoutStr != "",
 		PodcertWorkersPerSigner:        podcertWorkers,
@@ -310,6 +318,15 @@ func (c *Config) PostgresConnString() string {
 		return c.PostgresConnectionString
 	}
 	return DefaultPostgresConnectionString
+}
+
+// PostgresSchemaName returns the configured schema, falling back to the
+// shell installer's default. ate-api-server rejects an empty value.
+func (c *Config) PostgresSchemaName() string {
+	if c.PostgresSchema != "" {
+		return c.PostgresSchema
+	}
+	return DefaultPostgresSchema
 }
 
 // WaitTimeout returns how long to wait for a workload whose historical timeout
