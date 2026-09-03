@@ -322,7 +322,7 @@ const (
 	ActorMetadataField_ACTOR_METADATA_FIELD_UNSPECIFIED ActorMetadataField = 0
 	ActorMetadataField_ACTOR_METADATA_FIELD_NAME        ActorMetadataField = 1
 	ActorMetadataField_ACTOR_METADATA_FIELD_ATESPACE    ActorMetadataField = 2
-	ActorMetadataField_ACTOR_METADATA_FIELD_UID         ActorMetadataField = 3
+	ActorMetadataField_ACTOR_METADATA_FIELD_UID         ActorMetadataField = 3 // Keep this in sync with ActorMetadataItem.field's maximum.
 )
 
 // Enum value maps for ActorMetadataField.
@@ -3545,6 +3545,8 @@ func (x *ActorMetadataDataSource) GetItems() []*ActorMetadataItem {
 type ActorMetadataItem struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// +k8s:required
+	// +k8s:minimum=1
+	// +k8s:maximum=3 # keep this in sync with the ActorMetadataField enum
 	Field ActorMetadataField `protobuf:"varint,1,opt,name=field,proto3,enum=ateapi.ActorMetadataField" json:"field,omitempty"`
 	// +k8s:required
 	// +k8s:minLength=1

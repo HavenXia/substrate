@@ -1139,6 +1139,8 @@ message ActorMetadataDataSource {
 // a clean relative Unix path from the root of the volume.
 message ActorMetadataItem {
   // +k8s:required
+  // +k8s:minimum=1
+  // +k8s:maximum=3 # keep this in sync with the ActorMetadataField enum
   ActorMetadataField field = 1;
 
   // +k8s:required
@@ -1153,6 +1155,7 @@ enum ActorMetadataField {
   ACTOR_METADATA_FIELD_NAME = 1;
   ACTOR_METADATA_FIELD_ATESPACE = 2;
   ACTOR_METADATA_FIELD_UID = 3;
+  // Keep this in sync with ActorMetadataItem.field's maximum.
 }
 
 // TrustBundleDataSource projects the trust anchors of the named trust bundle
