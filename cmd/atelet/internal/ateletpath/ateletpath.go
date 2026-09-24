@@ -201,8 +201,6 @@ func ActorDirs(actorUID string) *ateompb.ActorDirs {
 	return &ateompb.ActorDirs{
 		RootDir:                   ActorPath(actorUID),
 		OciBundleDir:              OCIBundleDir(actorUID),
-		RunscStateDir:             RunSCStateDir(actorUID),
-		PidFileDir:                PIDFileDir(actorUID),
 		CheckpointDir:             CheckpointStateDir(actorUID),
 		RestoreDir:                RestoreStateDir(actorUID),
 		DurableDirVolumeMountsDir: DurableDirVolumeMountsDir(actorUID),

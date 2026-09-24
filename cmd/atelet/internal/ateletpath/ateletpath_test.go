@@ -28,8 +28,6 @@ func TestActorDirs(t *testing.T) {
 	}
 	under := map[string]string{
 		"oci_bundle_dir":                actorDirs.GetOciBundleDir(),
-		"runsc_state_dir":               actorDirs.GetRunscStateDir(),
-		"pid_file_dir":                  actorDirs.GetPidFileDir(),
 		"checkpoint_dir":                actorDirs.GetCheckpointDir(),
 		"restore_dir":                   actorDirs.GetRestoreDir(),
 		"durable_dir_volume_mounts_dir": actorDirs.GetDurableDirVolumeMountsDir(),
