@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package nodepath holds the on-node paths atelet and the ateoms agree on
-// before any RPC: the host directory both mount and the sockets and netns.
+// Package nodepath holds the node-level paths more than one component needs:
+// the host directory atelet and the ateoms both mount, the sockets and netns
+// they find each other by, and the per-actor parent directory.
 package nodepath
 
 import "path/filepath"
@@ -21,6 +22,9 @@ import "path/filepath"
 // BasePath is the root shared folder on the host filesystem, mounted at the
 // same path into the atelet and ateom containers.
 const BasePath = "/var/lib/ateom-gvisor"
+
+// ActorsDir is the parent of the per-actor directories atelet prepares.
+var ActorsDir = filepath.Join(BasePath, "actors")
 
 // AteomSupportSocket is the node-local atelet socket used by atunnel
 // to request credentials for the worker's current actor assignment.

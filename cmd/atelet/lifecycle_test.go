@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/agent-substrate/substrate/cmd/atelet/internal/ateletpath"
+	"github.com/agent-substrate/substrate/internal/nodepath"
 	"github.com/agent-substrate/substrate/internal/proto/ateletpb"
 	"github.com/agent-substrate/substrate/internal/proto/ateompb"
 	"google.golang.org/grpc"
@@ -37,11 +38,11 @@ import (
 func useTempNodeDirs(t *testing.T) {
 	t.Helper()
 	root := t.TempDir()
-	origActors, origStatic := ateletpath.ActorsDir, ateletpath.StaticFilesDir
-	ateletpath.ActorsDir = filepath.Join(root, "actors")
+	origActors, origStatic := nodepath.ActorsDir, ateletpath.StaticFilesDir
+	nodepath.ActorsDir = filepath.Join(root, "actors")
 	ateletpath.StaticFilesDir = filepath.Join(root, "static-files")
 	t.Cleanup(func() {
-		ateletpath.ActorsDir, ateletpath.StaticFilesDir = origActors, origStatic
+		nodepath.ActorsDir, ateletpath.StaticFilesDir = origActors, origStatic
 	})
 }
 

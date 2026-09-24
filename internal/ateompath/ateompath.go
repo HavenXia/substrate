@@ -22,13 +22,10 @@ import (
 	"github.com/agent-substrate/substrate/internal/nodepath"
 )
 
-// ActorsDir is the parent of the per-actor directories; see ActorPath.
-var ActorsDir = filepath.Join(nodepath.BasePath, "actors")
-
 // ActorPath is ActorDirs.root_dir.
 func ActorPath(actorUID string) string {
 	return filepath.Join(
-		ActorsDir,
+		nodepath.ActorsDir,
 		actorUID,
 	)
 }

@@ -35,7 +35,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agent-substrate/substrate/cmd/atelet/internal/ateletpath"
 	"github.com/agent-substrate/substrate/internal/imagecache"
 	"github.com/agent-substrate/substrate/internal/nodepath"
 	"github.com/spf13/pflag"
@@ -80,7 +79,7 @@ func validateImageCacheGCFlags() error {
 	if imageCacheDirOutsideBasePath(*imageCacheDir) {
 		slog.Warn("Image cache dir is outside the ateom base path; its volume watermarks are measured separately from actor state",
 			slog.String("image_cache_dir", *imageCacheDir),
-			slog.String("actors_dir", ateletpath.ActorsDir))
+			slog.String("actors_dir", nodepath.ActorsDir))
 	}
 	return nil
 }
