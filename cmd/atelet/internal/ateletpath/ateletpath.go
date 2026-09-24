@@ -24,9 +24,6 @@ import (
 )
 
 var (
-	// StaticFilesDir holds things like downloaded runsc binaries.
-	StaticFilesDir = filepath.Join(nodepath.BasePath, "static-files")
-
 	// ImageCacheDir is the node-local OCI image layer cache (see
 	// internal/imagecache). It lives under BasePath so the cached layer
 	// directories are visible at the same path in atelet (which writes them)
@@ -35,7 +32,7 @@ var (
 )
 
 func RunSCBinaryPath(sha256 string) string {
-	return filepath.Join(StaticFilesDir, "runsc-"+sha256)
+	return filepath.Join(nodepath.StaticFilesDir, "runsc-"+sha256)
 }
 
 // GVisorReleaseDir is the directory a gVisor release tarball (gvisor.tar.bz2,
@@ -44,7 +41,7 @@ func RunSCBinaryPath(sha256 string) string {
 // subdirectory to sit next to it, so the whole release is kept together under
 // one directory rather than as loose files in StaticFilesDir.
 func GVisorReleaseDir(sha256 string) string {
-	return filepath.Join(StaticFilesDir, "gvisor-"+sha256)
+	return filepath.Join(nodepath.StaticFilesDir, "gvisor-"+sha256)
 }
 
 func ActorPath(actorUID string) string {

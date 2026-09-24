@@ -39,6 +39,7 @@ import (
 
 	"github.com/agent-substrate/substrate/cmd/atelet/internal/ategcs"
 	"github.com/agent-substrate/substrate/cmd/atelet/internal/ateletpath"
+	"github.com/agent-substrate/substrate/internal/nodepath"
 	"github.com/agent-substrate/substrate/internal/proto/ateletpb"
 	"github.com/agent-substrate/substrate/internal/resources"
 )
@@ -136,7 +137,7 @@ func recordFromRequest(sa *ateletpb.SandboxAssets) (*sandboxAssetsRecord, error)
 // Assets are cached, so re-fetching at Checkpoint/Restore is a no-op once
 // present.
 func (s *AteomHerder) ensureSandboxAssets(ctx context.Context, rec *sandboxAssetsRecord) (map[string]string, error) {
-	if err := os.MkdirAll(ateletpath.StaticFilesDir, 0o700); err != nil {
+	if err := os.MkdirAll(nodepath.StaticFilesDir, 0o700); err != nil {
 		return nil, fmt.Errorf("while creating static files dir: %w", err)
 	}
 	paths := make(map[string]string, len(rec.Assets))
@@ -229,7 +230,7 @@ func (s *AteomHerder) fetchGVisorRelease(ctx context.Context, entry assetEntry) 
 	defer os.Remove(tarball)
 	slog.InfoContext(ctx, "gVisor release download complete", slog.String("url", entry.URL), slog.Duration("duration", time.Since(tDownload)))
 
-	tmpDir, err := os.MkdirTemp(ateletpath.StaticFilesDir, filepath.Base(releaseDir)+"-extract-")
+	tmpDir, err := os.MkdirTemp(nodepath.StaticFilesDir, filepath.Base(releaseDir)+"-extract-")
 	if err != nil {
 		return "", wrapFileSystemErr("while creating extraction dir", err)
 	}
@@ -281,7 +282,7 @@ func (s *AteomHerder) downloadVerified(ctx context.Context, entry assetEntry, tm
 		return "", fmt.Errorf("while parsing sha256 hash: %w", err)
 	}
 
-	tmpFile, err := os.CreateTemp(ateletpath.StaticFilesDir, tmpPrefix)
+	tmpFile, err := os.CreateTemp(nodepath.StaticFilesDir, tmpPrefix)
 	if err != nil {
 		return "", wrapFileSystemErr("while creating temp file", err)
 	}

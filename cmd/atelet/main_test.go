@@ -36,6 +36,7 @@ import (
 	"github.com/agent-substrate/substrate/cmd/atelet/internal/ateletpath"
 	"github.com/agent-substrate/substrate/internal/ateattr"
 	"github.com/agent-substrate/substrate/internal/atelet"
+	"github.com/agent-substrate/substrate/internal/nodepath"
 	"github.com/agent-substrate/substrate/internal/proto/ateletpb"
 	"github.com/agent-substrate/substrate/internal/proto/ateompb"
 	"github.com/agent-substrate/substrate/internal/resources"
@@ -435,9 +436,9 @@ func TestToAteomSnapshotScope(t *testing.T) {
 // with a nil error, failing the test. StaticFilesDir is redirected to a temp
 // dir so the planted path is writable and isolated.
 func TestFetchAssetRejectsBadHash(t *testing.T) {
-	orig := ateletpath.StaticFilesDir
-	ateletpath.StaticFilesDir = t.TempDir()
-	t.Cleanup(func() { ateletpath.StaticFilesDir = orig })
+	orig := nodepath.StaticFilesDir
+	nodepath.StaticFilesDir = t.TempDir()
+	t.Cleanup(func() { nodepath.StaticFilesDir = orig })
 
 	// Invalid (8 chars, not 64) but separator-free, so it resolves to a normal
 	// filename inside the temp StaticFilesDir.
@@ -476,15 +477,15 @@ func (fakeObjectStorage) PutObject(_ context.Context, _, _ string, _ io.Reader) 
 // TestFetchAssetStreaming covers the streamed download: good asset cached,
 // over-cap rejected, hash mismatch rejected (failures leave no cache file).
 func TestFetchAssetStreaming(t *testing.T) {
-	origDir, origCap := ateletpath.StaticFilesDir, maxAssetBytes
-	t.Cleanup(func() { ateletpath.StaticFilesDir, maxAssetBytes = origDir, origCap })
+	origDir, origCap := nodepath.StaticFilesDir, maxAssetBytes
+	t.Cleanup(func() { nodepath.StaticFilesDir, maxAssetBytes = origDir, origCap })
 
 	content := []byte("micro-vm kernel bytes")
 	goodHash := fmt.Sprintf("%x", sha256.Sum256(content))
 	const url = "gs://test-bucket/asset"
 
 	t.Run("good asset is cached", func(t *testing.T) {
-		ateletpath.StaticFilesDir = t.TempDir()
+		nodepath.StaticFilesDir = t.TempDir()
 		s := &AteomHerder{anonGCSClient: fakeObjectStorage{data: content}}
 		path, err := s.fetchAsset(context.Background(), assetEntry{URL: url, SHA256: goodHash})
 		if err != nil {
@@ -500,7 +501,7 @@ func TestFetchAssetStreaming(t *testing.T) {
 	})
 
 	t.Run("over-cap asset rejected, cache not written", func(t *testing.T) {
-		ateletpath.StaticFilesDir = t.TempDir()
+		nodepath.StaticFilesDir = t.TempDir()
 		maxAssetBytes = 4 // content is longer than this
 		s := &AteomHerder{anonGCSClient: fakeObjectStorage{data: content}}
 		_, err := s.fetchAsset(context.Background(), assetEntry{URL: url, SHA256: goodHash})
@@ -513,7 +514,7 @@ func TestFetchAssetStreaming(t *testing.T) {
 	})
 
 	t.Run("hash mismatch rejected, cache not written", func(t *testing.T) {
-		ateletpath.StaticFilesDir = t.TempDir()
+		nodepath.StaticFilesDir = t.TempDir()
 		maxAssetBytes = origCap
 		wrongHash := strings.Repeat("a", 64) // valid 64-hex format, wrong value
 		s := &AteomHerder{anonGCSClient: fakeObjectStorage{data: content}}
@@ -527,7 +528,7 @@ func TestFetchAssetStreaming(t *testing.T) {
 	})
 
 	t.Run("missing object keeps the client's sentinel", func(t *testing.T) {
-		ateletpath.StaticFilesDir = t.TempDir()
+		nodepath.StaticFilesDir = t.TempDir()
 		maxAssetBytes = origCap
 		// The ategcs clients tag a missing object with ErrObjectNotFound.
 		notFound := fmt.Errorf("%w: no such object", ategcs.ErrObjectNotFound)
@@ -539,7 +540,7 @@ func TestFetchAssetStreaming(t *testing.T) {
 	})
 
 	t.Run("malformed url is rejected", func(t *testing.T) {
-		ateletpath.StaticFilesDir = t.TempDir()
+		nodepath.StaticFilesDir = t.TempDir()
 		maxAssetBytes = origCap
 		s := &AteomHerder{anonGCSClient: fakeObjectStorage{data: content}}
 		// Invalid percent-escape: url.Parse rejects it inside ategcs.Open.
@@ -550,7 +551,7 @@ func TestFetchAssetStreaming(t *testing.T) {
 	})
 
 	t.Run("network error keeps its context wrap", func(t *testing.T) {
-		ateletpath.StaticFilesDir = t.TempDir()
+		nodepath.StaticFilesDir = t.TempDir()
 		maxAssetBytes = origCap
 		s := &AteomHerder{anonGCSClient: fakeObjectStorage{err: errors.New("connection refused")}}
 		_, err := s.fetchAsset(context.Background(), assetEntry{URL: url, SHA256: goodHash})
