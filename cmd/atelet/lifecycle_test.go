@@ -38,11 +38,11 @@ import (
 func useTempNodeDirs(t *testing.T) {
 	t.Helper()
 	root := t.TempDir()
-	origActors, origStatic := nodepath.ActorsDir, ateletpath.StaticFilesDir
+	origActors, origStatic := nodepath.ActorsDir, nodepath.StaticFilesDir
 	nodepath.ActorsDir = filepath.Join(root, "actors")
-	ateletpath.StaticFilesDir = filepath.Join(root, "static-files")
+	nodepath.StaticFilesDir = filepath.Join(root, "static-files")
 	t.Cleanup(func() {
-		nodepath.ActorsDir, ateletpath.StaticFilesDir = origActors, origStatic
+		nodepath.ActorsDir, nodepath.StaticFilesDir = origActors, origStatic
 	})
 }
 
