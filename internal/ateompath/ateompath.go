@@ -36,7 +36,7 @@ func ActorResolvConfPath(actorUID string) string {
 	return filepath.Join(ActorPath(actorUID), "resolv.conf")
 }
 
-// RunSCStateDir is ActorDirs.runsc_state_dir.
+// RunSCStateDir is runsc --root for the actor's sandbox, under ActorDirs.root_dir.
 func RunSCStateDir(actorUID string) string {
 	return filepath.Join(
 		ActorPath(actorUID),
@@ -129,7 +129,7 @@ func RestoreStateDir(actorUID string) string {
 	)
 }
 
-// PIDFileDir is ActorDirs.pid_file_dir.
+// PIDFileDir is where runsc writes <container>.pid, under ActorDirs.root_dir.
 func PIDFileDir(actorUID string) string {
 	return filepath.Join(
 		ActorPath(actorUID),

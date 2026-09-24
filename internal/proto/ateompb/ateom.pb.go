@@ -222,20 +222,16 @@ type ActorDirs struct {
 	RootDir string `protobuf:"bytes,1,opt,name=root_dir,json=rootDir,proto3" json:"root_dir,omitempty"`
 	// Holds one OCI bundle per container, named after the container.
 	OciBundleDir string `protobuf:"bytes,2,opt,name=oci_bundle_dir,json=ociBundleDir,proto3" json:"oci_bundle_dir,omitempty"`
-	// runsc --root for the actor's sandbox. gVisor only.
-	RunscStateDir string `protobuf:"bytes,3,opt,name=runsc_state_dir,json=runscStateDir,proto3" json:"runsc_state_dir,omitempty"`
-	// Where runsc writes <container>.pid. gVisor only.
-	PidFileDir string `protobuf:"bytes,4,opt,name=pid_file_dir,json=pidFileDir,proto3" json:"pid_file_dir,omitempty"`
 	// Where CheckpointWorkload writes the snapshot files.
-	CheckpointDir string `protobuf:"bytes,5,opt,name=checkpoint_dir,json=checkpointDir,proto3" json:"checkpoint_dir,omitempty"`
+	CheckpointDir string `protobuf:"bytes,3,opt,name=checkpoint_dir,json=checkpointDir,proto3" json:"checkpoint_dir,omitempty"`
 	// Where the snapshot files RestoreWorkload reads have been downloaded to.
-	RestoreDir string `protobuf:"bytes,6,opt,name=restore_dir,json=restoreDir,proto3" json:"restore_dir,omitempty"`
+	RestoreDir string `protobuf:"bytes,4,opt,name=restore_dir,json=restoreDir,proto3" json:"restore_dir,omitempty"`
 	// Holds one subdirectory per durable-dir volume.
-	DurableDirVolumeMountsDir string `protobuf:"bytes,7,opt,name=durable_dir_volume_mounts_dir,json=durableDirVolumeMountsDir,proto3" json:"durable_dir_volume_mounts_dir,omitempty"`
+	DurableDirVolumeMountsDir string `protobuf:"bytes,5,opt,name=durable_dir_volume_mounts_dir,json=durableDirVolumeMountsDir,proto3" json:"durable_dir_volume_mounts_dir,omitempty"`
 	// Holds one subdirectory per system-info volume.
-	SystemInfoVolumeRootsDir string `protobuf:"bytes,8,opt,name=system_info_volume_roots_dir,json=systemInfoVolumeRootsDir,proto3" json:"system_info_volume_roots_dir,omitempty"`
+	SystemInfoVolumeRootsDir string `protobuf:"bytes,6,opt,name=system_info_volume_roots_dir,json=systemInfoVolumeRootsDir,proto3" json:"system_info_volume_roots_dir,omitempty"`
 	// Holds one mount point per CSI volume.
-	VolumesDir    string `protobuf:"bytes,9,opt,name=volumes_dir,json=volumesDir,proto3" json:"volumes_dir,omitempty"`
+	VolumesDir    string `protobuf:"bytes,7,opt,name=volumes_dir,json=volumesDir,proto3" json:"volumes_dir,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -280,20 +276,6 @@ func (x *ActorDirs) GetRootDir() string {
 func (x *ActorDirs) GetOciBundleDir() string {
 	if x != nil {
 		return x.OciBundleDir
-	}
-	return ""
-}
-
-func (x *ActorDirs) GetRunscStateDir() string {
-	if x != nil {
-		return x.RunscStateDir
-	}
-	return ""
-}
-
-func (x *ActorDirs) GetPidFileDir() string {
-	if x != nil {
-		return x.PidFileDir
 	}
 	return ""
 }
@@ -1902,19 +1884,16 @@ var File_ateom_proto protoreflect.FileDescriptor
 
 const file_ateom_proto_rawDesc = "" +
 	"\n" +
-	"\vateom.proto\x12\x05ateom\"\x81\x03\n" +
+	"\vateom.proto\x12\x05ateom\"\xb7\x02\n" +
 	"\tActorDirs\x12\x19\n" +
 	"\broot_dir\x18\x01 \x01(\tR\arootDir\x12$\n" +
-	"\x0eoci_bundle_dir\x18\x02 \x01(\tR\fociBundleDir\x12&\n" +
-	"\x0frunsc_state_dir\x18\x03 \x01(\tR\rrunscStateDir\x12 \n" +
-	"\fpid_file_dir\x18\x04 \x01(\tR\n" +
-	"pidFileDir\x12%\n" +
-	"\x0echeckpoint_dir\x18\x05 \x01(\tR\rcheckpointDir\x12\x1f\n" +
-	"\vrestore_dir\x18\x06 \x01(\tR\n" +
+	"\x0eoci_bundle_dir\x18\x02 \x01(\tR\fociBundleDir\x12%\n" +
+	"\x0echeckpoint_dir\x18\x03 \x01(\tR\rcheckpointDir\x12\x1f\n" +
+	"\vrestore_dir\x18\x04 \x01(\tR\n" +
 	"restoreDir\x12@\n" +
-	"\x1ddurable_dir_volume_mounts_dir\x18\a \x01(\tR\x19durableDirVolumeMountsDir\x12>\n" +
-	"\x1csystem_info_volume_roots_dir\x18\b \x01(\tR\x18systemInfoVolumeRootsDir\x12\x1f\n" +
-	"\vvolumes_dir\x18\t \x01(\tR\n" +
+	"\x1ddurable_dir_volume_mounts_dir\x18\x05 \x01(\tR\x19durableDirVolumeMountsDir\x12>\n" +
+	"\x1csystem_info_volume_roots_dir\x18\x06 \x01(\tR\x18systemInfoVolumeRootsDir\x12\x1f\n" +
+	"\vvolumes_dir\x18\a \x01(\tR\n" +
 	"volumesDir\"\xd3\x02\n" +
 	"\x18TerminateWorkloadRequest\x12\x1a\n" +
 	"\batespace\x18\x01 \x01(\tR\batespace\x12\x1d\n" +

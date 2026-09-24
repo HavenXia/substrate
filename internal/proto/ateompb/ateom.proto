@@ -115,20 +115,16 @@ message ActorDirs {
   string root_dir = 1;
   // Holds one OCI bundle per container, named after the container.
   string oci_bundle_dir = 2;
-  // runsc --root for the actor's sandbox. gVisor only.
-  string runsc_state_dir = 3;
-  // Where runsc writes <container>.pid. gVisor only.
-  string pid_file_dir = 4;
   // Where CheckpointWorkload writes the snapshot files.
-  string checkpoint_dir = 5;
+  string checkpoint_dir = 3;
   // Where the snapshot files RestoreWorkload reads have been downloaded to.
-  string restore_dir = 6;
+  string restore_dir = 4;
   // Holds one subdirectory per durable-dir volume.
-  string durable_dir_volume_mounts_dir = 7;
+  string durable_dir_volume_mounts_dir = 5;
   // Holds one subdirectory per system-info volume.
-  string system_info_volume_roots_dir = 8;
+  string system_info_volume_roots_dir = 6;
   // Holds one mount point per CSI volume.
-  string volumes_dir = 9;
+  string volumes_dir = 7;
 }
 
 message TerminateWorkloadRequest {
