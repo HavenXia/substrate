@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/agent-substrate/substrate/cmd/atelet/internal/ateletpath"
+	"github.com/agent-substrate/substrate/internal/nodepath"
 	"github.com/agent-substrate/substrate/internal/proto/ateletpb"
 	"github.com/agent-substrate/substrate/internal/volume"
 	"github.com/google/go-cmp/cmp"
@@ -70,15 +71,15 @@ func (f *fakeWorkerPlugin) UnmountVolume(ctx context.Context, volumeID string, t
 
 var _ volume.VolumePluginWorkerPlane = (*fakeWorkerPlugin)(nil)
 
-// withTempActorsDir redirects the ateompath actor tree at a temp dir for the
+// withTempActorsDir redirects nodepath.ActorsDir at a temp dir for the
 // duration of the test. Every path derived from ActorsDir moves with it,
 // including the ones resetActorDirs and the OCI spec builder compute
 // independently of the volume mount code.
 func withTempActorsDir(t *testing.T) {
 	t.Helper()
-	orig := ateletpath.ActorsDir
-	ateletpath.ActorsDir = filepath.Join(t.TempDir(), "actors")
-	t.Cleanup(func() { ateletpath.ActorsDir = orig })
+	orig := nodepath.ActorsDir
+	nodepath.ActorsDir = filepath.Join(t.TempDir(), "actors")
+	t.Cleanup(func() { nodepath.ActorsDir = orig })
 }
 
 func TestUnmountExternalVolumes(t *testing.T) {

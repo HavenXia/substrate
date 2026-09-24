@@ -26,9 +26,9 @@ import (
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
-// parityOptions mounts one volume of every kind.
 const testActorUID = "actor_uid"
 
+// parityOptions mounts one volume of every kind.
 var parityOptions = Options{
 	Args:                      []string{"/app"},
 	DurableDirVolumeMountsDir: ateompath.DurableDirVolumeMountsDir(testActorUID),

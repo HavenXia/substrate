@@ -206,7 +206,7 @@ func main() {
 	imageCache, err := imagecache.New(*imageCacheDir,
 		imagecache.WithAuthenticator(gcpRegistryAuthn),
 		imagecache.WithLocalhostRegistryReplacement(*localhostRegistryReplacement),
-		imagecache.WithActorsDir(ateletpath.ActorsDir),
+		imagecache.WithActorsDir(nodepath.ActorsDir),
 		imagecache.WithMinAge(*imageCacheMinAge),
 		imagecache.WithMeter(otel.Meter("atelet")),
 	)

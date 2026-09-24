@@ -54,7 +54,6 @@ import (
 	"math"
 	"math/rand"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -138,19 +137,16 @@ func (c runConfig) validate() error {
 	if c.live {
 		if c.evictIdle < liveNodeIdleFloor {
 			return fmt.Errorf("--evict-idle=%v is below %v with %s present: min-age is the only protection that applies across processes using the cache",
-				c.evictIdle, liveNodeIdleFloor, actorsDir)
+				c.evictIdle, liveNodeIdleFloor, nodepath.ActorsDir)
 		}
 		// Both modes evict here (evictIfLow is a low-water flush on a
 		// loop), unsynchronized with every other user of the pool.
 		if !c.force {
-			return fmt.Errorf("%s exists — this looks like a live node, and evictions are not synchronized with other processes using the cache; re-run with --force to proceed", actorsDir)
+			return fmt.Errorf("%s exists — this looks like a live node, and evictions are not synchronized with other processes using the cache; re-run with --force to proceed", nodepath.ActorsDir)
 		}
 	}
 	return nil
 }
-
-// actorsDir is where atelet keeps the per-actor directories.
-var actorsDir = filepath.Join(nodepath.BasePath, "actors")
 
 // newStore opens the cache with the options both modes share: min-age
 // from --evict-idle, and bundle-spec rooting from the node's actors dir
@@ -158,7 +154,7 @@ var actorsDir = filepath.Join(nodepath.BasePath, "actors")
 func newStore(extra ...imagecache.Option) (*imagecache.Store, error) {
 	return imagecache.New(*cacheDir, append([]imagecache.Option{
 		imagecache.WithMinAge(*evictIdle),
-		imagecache.WithActorsDir(actorsDir),
+		imagecache.WithActorsDir(nodepath.ActorsDir),
 	}, extra...)...)
 }
 
@@ -176,7 +172,7 @@ func main() {
 		cacheDir: *cacheDir, refsFile: *refsFile,
 		evictAll: *evictAll, force: *force,
 		evictIdle: *evictIdle, minFreeGB: *minFreeGB,
-		live: looksLikeLiveNode(actorsDir),
+		live: looksLikeLiveNode(nodepath.ActorsDir),
 	}
 	flag.Visit(func(f *flag.Flag) { cfg.setFlags = append(cfg.setFlags, f.Name) })
 	if err := cfg.validate(); err != nil {
