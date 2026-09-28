@@ -1140,10 +1140,15 @@ func (s *AteomService) terminateWorkload(ctx context.Context, actorRef resources
 	// delete succeeds anyway.
 	stopContainers(cleanupCtx, rcmd, containers)
 	// Keep this as best-effort cleanup: atelet resets the bundle and checkpoint
-	// directories after uploading the snapshot, and the next Run or Restore
-	// resets the runsc state and pid file directories by gvisor.
+	// directories after uploading the snapshot.
 	if err := cleanupContainers(cleanupCtx, rcmd, containers); err != nil {
 		errs = append(errs, fmt.Errorf("while cleaning up runsc containers: %w", err))
+	}
+
+	// The actor may resume on another worker, so this one may never see another
+	// Run or Restore for it. Reset files here to close the loop.
+	if err := resetRunscStateAndPidFileDirs(actorDirs); err != nil {
+		errs = append(errs, fmt.Errorf("while resetting runsc state and pid file dirs: %w", err))
 	}
 
 	// Detach the overlay rootfs mounts before atelet wipes the bundle dirs

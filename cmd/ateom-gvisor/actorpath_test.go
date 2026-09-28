@@ -21,7 +21,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/agent-substrate/substrate/internal/proto/ateompb"
+	"github.com/agent-substrate/substrate/internal/roottest"
 )
 
 func TestResetRunscStateAndPidFileDirs(t *testing.T) {
@@ -36,5 +39,33 @@ func TestResetRunscStateAndPidFileDirs(t *testing.T) {
 		if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
 			t.Errorf("ReadDir(%q) = %v, %v; want an empty directory", dir, entries, err)
 		}
+	}
+}
+
+// runsc leaves mounts in its state directory; unlinking one fails with EBUSY
+// until it is detached.
+func TestResetRunscStateAndPidFileDirs_DetachesMounts(t *testing.T) {
+	roottest.Require(t, "mount/unmount")
+	actorDirs := &ateompb.ActorDirs{RootDir: t.TempDir()}
+	if err := os.MkdirAll(runscStateDir(actorDirs), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(t.TempDir(), "netns")
+	target := filepath.Join(runscStateDir(actorDirs), "null-netns")
+	for _, f := range []string{src, target} {
+		if err := os.WriteFile(f, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := unix.Mount(src, target, "", unix.MS_BIND, ""); err != nil {
+		t.Fatalf("bind mount: %v", err)
+	}
+	t.Cleanup(func() { _ = unix.Unmount(target, unix.MNT_DETACH) })
+
+	if err := resetRunscStateAndPidFileDirs(actorDirs); err != nil {
+		t.Fatalf("resetRunscStateAndPidFileDirs() = %v", err)
+	}
+	if entries, err := os.ReadDir(runscStateDir(actorDirs)); err != nil || len(entries) != 0 {
+		t.Errorf("ReadDir(%q) = %v, %v; want an empty directory", runscStateDir(actorDirs), entries, err)
 	}
 }
