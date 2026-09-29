@@ -29,17 +29,19 @@ git clone --branch $NEW_RELEASE https://github.com/agent-substrate/substrate.git
 (cd old && go install ./cmd/kubectl-ate)
 ```
 
-Make two copies of the config file.
-> TODO: #1887 defines the config file.
+Every `ate-setup` run writes the settings it applied to a local settings file, in the format `--config` reads. Make two copies of the one from your install or your last `ate-setup` run:
 
-Keep `old.yaml` as it is, for rollback. If you build from source, keep `new.yaml` the same: the checkout you run from decides the release. If you install prebuilt images, set the image tag (`ATE_IMAGE_TAG`) in `new.yaml` to the new release.
+> [!NOTE]
+> TODO: #1887 sets where `ate-setup` writes the settings file.
 
 ```bash
-cp <your config file> ~/ate-upgrade/old.yaml
-cp <your config file> ~/ate-upgrade/new.yaml
+cp <settings file> ~/ate-upgrade/old.yaml
+cp <settings file> ~/ate-upgrade/new.yaml
 ```
 
-You will the steps from the new checkout:
+Keep `old.yaml` as it is, for rollback. If you build from source, keep `new.yaml` the same: the checkout you run from decides the release. If you install prebuilt images, set the image tag in `new.yaml` to the new release.
+
+You will run the steps from the new checkout:
 
 ```bash
 cd ~/ate-upgrade/new
