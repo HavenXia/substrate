@@ -2,7 +2,8 @@
 
 This runbook upgrades a running Agent Substrate install to a newer release in the same release window, meaning the same `v0.x`: for example, from v0.2.0 to v0.2.1. Between windows, for example from v0.1.x to v0.2.x, reinstall instead. 
 
-> [TODO]  Link to the Release Policy.
+> [!NOTE]
+> TODO: Depends on the policy doc. Link its release policy (which versions this runbook upgrades between) and its version skew policy (which component versions can run together during the upgrade).
 
 
 | Step | What changes | What running actors see | How long |
@@ -32,7 +33,7 @@ git clone --branch $NEW_RELEASE https://github.com/agent-substrate/substrate.git
 Every `ate-setup` run writes the settings it applied to a local settings file, in the format `--config` reads. Make two copies of the one from your install or your last `ate-setup` run:
 
 > [!NOTE]
-> TODO: #1887 sets where `ate-setup` writes the settings file.
+> TODO: Depends on #1887, which sets where `ate-setup` writes the settings file and its format.
 
 ```bash
 cp <settings file> ~/ate-upgrade/old.yaml
@@ -72,9 +73,8 @@ kubectl get deploy -A -l ate.dev/worker-pool
 
 A pool is done rolling when READY shows `n/n`, and UP-TO-DATE and AVAILABLE both show `n`. Wait until every pool is done, then go to step 2. This can happen when this release changes the worker pod template.
 
-> TODO: Define the API compatibility policy for workerPool. 
-> 
-> Proposal: within a release window, ate-controller does not change the pod template it renders, so this step replaces no workers.
+> [!NOTE]
+> TODO: Depends on the API compatibility policy in the policy doc: whether ate-controller may change the worker pod template it renders within a release window. Proposal: it does not, so this step replaces no workers.
 
 ### Step 2. Upgrade atelet
 
@@ -107,7 +107,8 @@ If you build from source, build and push both worker images once. This touches n
 go run ./cmd/ate-setup publish worker-images --config ~/ate-upgrade/new.yaml | tee ~/ate-upgrade/worker-images.txt
 ```
 
-> TODO: Figure out whether OSS has prebuilt images published.
+> [!NOTE]
+> TODO: Depends on the release policy in the policy doc: whether open source releases publish prebuilt images, where, and under which tag.
 
 Then move the pools. For each pool:
 
@@ -172,7 +173,7 @@ go run ./cmd/ate-setup deploy sandboxconfig --config ~/ate-upgrade/new.yaml
 ```
 
 > [!NOTE]
-> TODO: The shape of the default SandboxConfig is not settled. Until each release ships it under its own name, this overwrites `gvisor-default` in place.
+> TODO: Depends on the shape of the default SandboxConfig. Until each release ships it under its own name, this overwrites `gvisor-default` in place.
 
 - **Done:** all rollout status print `successfully rolled out`, and `deploy sandboxconfig` exits 0.
 - **Stuck:** the old pod keeps serving. Roll back step 4 if you cannot fix it.
