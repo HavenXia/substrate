@@ -98,6 +98,10 @@ type sandboxAssetsRecord struct {
 	// (gVisor's image files, cloud-hypervisor's snapshot set, ...). Empty in the
 	// on-node record written at Run/Restore; populated at Checkpoint.
 	SnapshotFiles []string `json:"snapshotFiles,omitempty"`
+	// DataSnapshotFiles is the subset of SnapshotFiles that restores the actor
+	// at DATA scope on its own, as reported by CheckpointWorkloadResponse.
+	// Empty when the capture holds no durable data.
+	DataSnapshotFiles []string `json:"dataSnapshotFiles,omitempty"`
 	// Scope is the snapshot scope the checkpoint captured, as the shared
 	// ateattr label ("full" or "data"), so a snapshot's content is knowable
 	// from the manifest alone. Empty in the on-node record written at
@@ -492,6 +496,9 @@ func unmarshalSandboxRecord(data []byte) (*sandboxAssetsRecord, error) {
 	}
 	if err := validateSnapshotFiles(rec.SnapshotFiles); err != nil {
 		return nil, fmt.Errorf("sandbox record/manifest has invalid snapshotFiles: %w", err)
+	}
+	if err := validateSnapshotFiles(rec.DataSnapshotFiles); err != nil {
+		return nil, fmt.Errorf("sandbox record/manifest has invalid dataSnapshotFiles: %w", err)
 	}
 	return rec, nil
 }
