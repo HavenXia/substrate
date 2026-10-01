@@ -33,6 +33,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -497,7 +498,7 @@ func unmarshalSandboxRecord(data []byte) (*sandboxAssetsRecord, error) {
 	if err := validateSnapshotFiles(rec.SnapshotFiles); err != nil {
 		return nil, fmt.Errorf("sandbox record/manifest has invalid snapshotFiles: %w", err)
 	}
-	if err := validateSnapshotFiles(rec.DataSnapshotFiles); err != nil {
+	if err := validateDataSnapshotFiles(rec.SnapshotFiles, rec.DataSnapshotFiles); err != nil {
 		return nil, fmt.Errorf("sandbox record/manifest has invalid dataSnapshotFiles: %w", err)
 	}
 	return rec, nil
@@ -519,6 +520,16 @@ func validateSnapshotFiles(files []string) error {
 			return fmt.Errorf("snapshotFiles[%d] %q is duplicated", i, name)
 		}
 		seen[name] = true
+	}
+	return nil
+}
+
+// validateDataSnapshotFiles requires each data file to be one of files.
+func validateDataSnapshotFiles(files, dataFiles []string) error {
+	for _, name := range dataFiles {
+		if !slices.Contains(files, name) {
+			return fmt.Errorf("data snapshot file %q is not one of the snapshot files", name)
+		}
 	}
 	return nil
 }

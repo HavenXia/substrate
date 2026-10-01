@@ -26,7 +26,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"syscall"
 	"time"
@@ -740,10 +739,8 @@ func checkpointSnapshotFiles(resp *ateompb.CheckpointWorkloadResponse, required 
 		return nil, nil, fmt.Errorf("ateom reported invalid snapshot files: %w", err)
 	}
 	dataFiles = resp.GetDataSnapshotFiles()
-	for _, name := range dataFiles {
-		if !slices.Contains(files, name) {
-			return nil, nil, fmt.Errorf("ateom reported data snapshot file %q that is not one of its full snapshot files", name)
-		}
+	if err := validateDataSnapshotFiles(files, dataFiles); err != nil {
+		return nil, nil, fmt.Errorf("ateom reported invalid data snapshot files: %w", err)
 	}
 	return files, dataFiles, nil
 }

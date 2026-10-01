@@ -237,18 +237,18 @@ func TestSnapshotManifestRejectsNonLocalFile(t *testing.T) {
 	}
 }
 
-func TestSnapshotManifestRejectsNonLocalDataFile(t *testing.T) {
+func TestSnapshotManifestRejectsDataFileNotInSnapshotFiles(t *testing.T) {
 	manifest, err := json.Marshal(sandboxAssetsRecord{
 		SandboxClass:      "gvisor",
 		PauseImage:        testPauseImage,
-		SnapshotFiles:     []string{"data.tar"},
-		DataSnapshotFiles: []string{"../outside"},
+		SnapshotFiles:     []string{"checkpoint.img"},
+		DataSnapshotFiles: []string{"data.tar"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := unmarshalSandboxRecord(manifest); err == nil {
-		t.Fatal("unmarshalSandboxRecord() accepted a data file outside the checkpoint directory")
+		t.Fatal("unmarshalSandboxRecord() accepted a data file that is not one of the snapshot files")
 	}
 }
 
