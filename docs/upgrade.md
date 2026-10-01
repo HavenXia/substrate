@@ -15,7 +15,7 @@ This runbook upgrades a running Agent Substrate install to a newer release in th
 
 podcertificate-controller signs the certificates the other components use, and ate-controller manages the WorkerPools, so they go first, together with the CRDs. atelet and the workers go before ate-api-server and atenet, so that when the API server changes, every node already understands requests from either version. The SandboxConfig admission policy and the default SandboxConfig go last, once every worker can run what they allow. Rollback is the same list in reverse, from the old release. An actor that crashes along the way goes back to its last snapshot with one revert call.
 
-The system upgrade does not change the database engine, Kubernetes version or the node OS version.
+The system upgrade does not change the database engine, the CSI drivers `--setup-csi` installs, the Kubernetes version or the node OS version.
 
 ## Before you start
 
@@ -49,7 +49,7 @@ cd ~/ate-upgrade/new
 ```
 
 > [!CAUTION]
-> Do not run `ate-setup deploy ate-system` or `ate-setup delete` during the upgrade. They change every component out of upgrade order.
+> Do not run `ate-setup deploy ate-system`, `ate-setup setup csi` or `ate-setup delete` during the upgrade. They change components out of upgrade order.
 
 ## Upgrade
 
