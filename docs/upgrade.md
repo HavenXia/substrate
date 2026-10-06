@@ -30,17 +30,24 @@ git clone --branch $NEW_RELEASE https://github.com/agent-substrate/substrate.git
 (cd old && go install ./cmd/kubectl-ate)
 ```
 
-Every `ate-setup` run writes the settings it applied to a local settings file, in the format `--config` reads. Make two copies of the one from your install or your last `ate-setup` run:
-
-> [!NOTE]
-> TODO: Depends on #1887, which sets where `ate-setup` writes the settings file and its format.
+Point kubectl at the cluster you upgrade, and keep it there until the upgrade is done:
 
 ```bash
-cp <settings file> ~/ate-upgrade/old.yaml
-cp <settings file> ~/ate-upgrade/new.yaml
+kubectl config use-context <context of the cluster>
 ```
 
-Keep `old.yaml` as it is, for rollback. If you build from source, keep `new.yaml` the same: the checkout you run from decides the release. If you install prebuilt images, set the image tag in `new.yaml` to the new release.
+Every `ate-setup deploy` run records the settings it was given in a file under `installs/` in the record directory `record.dir` names, and prints the path as `recorded this configuration in <path>`. Make two copies of this cluster's record:
+
+```bash
+cp <record> ~/ate-upgrade/old.yaml
+cp <record> ~/ate-upgrade/new.yaml
+```
+
+Check that the copy holds the settings you installed with. If it is missing or wrong, write the file from those settings; [operator-install.md](operator-install.md) lists them.
+
+A record holds no database connection strings. If you use an external database, export `ATE_API_POSTGRES_READ_WRITE_CONNECTION_STRING`, and `ATE_API_POSTGRES_OWNER_CONNECTION_STRING` if you set it, in the shell you run the steps from.
+
+Keep `old.yaml` as it is, for rollback. If you build from source, keep `new.yaml` the same: the checkout you run from decides the release. If you install prebuilt images, set `images.tag` in `new.yaml` to the new release.
 
 You will run the steps from the new checkout:
 
