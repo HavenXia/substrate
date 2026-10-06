@@ -997,11 +997,9 @@ func TestBuildDeploymentAtunnelIdentitiesPrefixedServiceAccounts(t *testing.T) {
 }
 
 // TestBuildDeploymentOmitsBrokerIdentityForCanonicalInstall pins the flag's
-// absence, which is what keeps a rolling upgrade working. docs/upgrade.md
-// upgrades this controller before any pool's workerImage, so it reconciles
-// Deployments still pinned to the old image. An ateom from before
-// --atunnel-broker-identity existed exits on the unrecognized flag, so passing
-// it would crashloop every old worker the moment the control plane rolled out.
+// absence. A WorkerPool may still pin an ateom from before
+// --atunnel-broker-identity existed, which exits on the unrecognized flag, so
+// passing it would crashloop that pool's workers.
 func TestBuildDeploymentOmitsBrokerIdentityForCanonicalInstall(t *testing.T) {
 	c := buildDeploymentApplyConfig(testWorkerPoolApplyConfig(nil), ateomOTelSettings{},
 		installdefaults.SystemNamespace, installdefaults.AteletServiceAccount, installdefaults.RouterServiceAccount).

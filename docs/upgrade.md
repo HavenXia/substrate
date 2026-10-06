@@ -8,12 +8,12 @@ This runbook upgrades a running Agent Substrate install to a newer release in th
 
 | Step | What changes | What running actors see | How long |
 |---|---|---|---|
-| 1 | podcertificate-controller, CRDs and ate-controller | Usually nothing; see step 1 | A minute, or as long as step 3 if it replaces workers |
+| 1 | podcertificate-controller | Nothing | A minute |
 | 2 | atelet, one node at a time | Nothing | Seconds to about 6 minutes per node |
 | 3 | workers | `SIGTERM`, then a 30-minute window to be suspended before `SIGKILL` | Minutes to hours per pool |
-| 4 | ate-api-server, atenet, then SandboxConfig | API calls and long HTTP requests can be cut once | A few minutes |
+| 4 | ate-api-server, the CRDs and ate-controller, atenet, then SandboxConfig | API calls and long HTTP requests can be cut once; see step 4 | A few minutes, or as long as step 3 if workers roll again |
 
-podcertificate-controller signs the certificates the other components use, and ate-controller manages the WorkerPools, so they go first, together with the CRDs. atelet and the workers go before ate-api-server and atenet, so that when the API server changes, every node already understands requests from either version. The SandboxConfig admission policy and the default SandboxConfig go last, once every worker can run what they allow. Rollback is the same list in reverse, from the old release. An actor that crashes along the way goes back to its last snapshot with one revert call.
+podcertificate-controller signs the certificates the other components use, so it goes first. atelet and the workers go before ate-api-server and atenet, so that when the API server changes, every node already understands requests from either version. ate-controller and the CRDs follow the API server: ate-controller is a client of the API server, and new workers start from the pod template the old ate-controller renders. The SandboxConfig admission policy and the default SandboxConfig go last, once every worker can run what they allow. Rollback is the same list in reverse, from the old release. An actor that crashes along the way goes back to its last snapshot with one revert call.
 
 The system upgrade does not change the database engine, the CSI drivers `--setup-csi` installs, the Kubernetes version or the node OS version.
 
@@ -53,28 +53,16 @@ cd ~/ate-upgrade/new
 
 ## Upgrade
 
-### Step 1. Upgrade podcertificate-controller, the CRDs and ate-controller
+### Step 1. Upgrade podcertificate-controller
 
 ```bash
 go run ./cmd/ate-setup deploy podcertificate-controller --config ~/ate-upgrade/new.yaml
-go run ./cmd/ate-setup deploy ate-controller --config ~/ate-upgrade/new.yaml
 ```
 
-The first command deploys the new podcertificate-controller and waits until it publishes its trust bundles. The second applies the new CRDs (`WorkerPool`, `SandboxConfig` and `CSIDriverConfig`) and ate-controller's RBAC, waits until the CRDs are established, then deploys the new `ate-controller` and waits for it. Rerunning is safe.
+This deploys the new podcertificate-controller and waits until it publishes its trust bundles. Rerunning is safe.
 
-- **Done:** both commands exit 0, and a minute later `kubectl -n ate-system get pods -l app=ate-controller` still shows one pod, Running, with RESTARTS 0.
-- **Stuck:** a command fails, or the pod keeps restarting. [Roll back step 1](#roll-back-step-1).
-
-A minute after the new pod starts, check whether it is replacing workers:
-
-```bash
-kubectl get deploy -A -l ate.dev/worker-pool
-```
-
-A pool is done rolling when READY shows `n/n`, and UP-TO-DATE and AVAILABLE both show `n`. Wait until every pool is done, then go to step 2. This can happen when this release changes the worker pod template.
-
-> [!NOTE]
-> TODO: Depends on the API compatibility policy in the policy doc: whether ate-controller may change the worker pod template it renders within a release window. Proposal: it does not, so this step replaces no workers.
+- **Done:** the command exits 0.
+- **Stuck:** the command fails. [Roll back step 1](#roll-back-step-1).
 
 ### Step 2. Upgrade atelet
 
@@ -158,6 +146,23 @@ kubectl -n ate-system rollout status deploy/ate-api-server
 kubectl ate get actors -A
 ```
 
+Then the CRDs and `ate-controller`:
+
+```bash
+go run ./cmd/ate-setup deploy ate-controller --config ~/ate-upgrade/new.yaml
+```
+
+This applies the new CRDs (`WorkerPool`, `SandboxConfig` and `CSIDriverConfig`) and ate-controller's RBAC, waits until the CRDs are established, then deploys the new `ate-controller` and waits for it. Rerunning is safe. A minute after the new pod starts, check whether it is replacing workers:
+
+```bash
+kubectl get deploy -A -l ate.dev/worker-pool
+```
+
+This happens when this release changes the worker pod template. A pool is done rolling when READY shows `n/n`, and UP-TO-DATE and AVAILABLE both show `n`. Wait until every pool is done before you go on.
+
+> [!NOTE]
+> TODO: Depends on the version skew policy: whether a release may change the worker pod template within a major.
+
 Then `atenet`:
 
 ```bash
@@ -175,12 +180,12 @@ go run ./cmd/ate-setup deploy sandboxconfig --config ~/ate-upgrade/new.yaml
 > [!NOTE]
 > TODO: Depends on the shape of the default SandboxConfig. Until each release ships it under its own name, this overwrites `gvisor-default` in place.
 
-- **Done:** all rollout status print `successfully rolled out`, and `deploy sandboxconfig` exits 0.
-- **Stuck:** the old pod keeps serving. Roll back step 4 if you cannot fix it.
+- **Done:** all rollout status print `successfully rolled out`, `deploy ate-controller` and `deploy sandboxconfig` exit 0, and `kubectl -n ate-system get pods -l app=ate-controller` shows one pod, Running, with RESTARTS 0.
+- **Stuck:** an old pod keeps serving, or the new ate-controller pod keeps restarting. Roll back step 4 if you cannot fix it.
 - **API clients:** an API call can fail once with a retriable error while an API server pod restarts. Retry it.
 - **Actors:** when the router restarts, an HTTP request that takes longer than about 10 seconds can be cut once.
 
-Then install the new `kubectl ate` with `go install ./cmd/kubectl-ate`. Actor owners can now use API fields and commands new in this release.
+Then install the new `kubectl ate` with `go install ./cmd/kubectl-ate`. Actor owners can now use API fields and commands new in this release, and you can set WorkerPool, SandboxConfig and CSIDriverConfig fields new in this release.
 
 The upgrade is done when step 4 is done. Keep `~/ate-upgrade` while you might still roll back, then delete it.
 
@@ -214,9 +219,12 @@ Tell actor owners to stop using API fields new in this release, because the old 
 ```bash
 go run ./cmd/ate-setup deploy sandboxconfig --config ~/ate-upgrade/old.yaml
 go run ./cmd/ate-setup deploy atenet --config ~/ate-upgrade/old.yaml
+go run ./cmd/ate-setup deploy ate-controller --config ~/ate-upgrade/old.yaml
 go run ./cmd/ate-setup deploy apiserver --config ~/ate-upgrade/old.yaml
 go install ./cmd/kubectl-ate
 ```
+
+`deploy ate-controller` restores the old CRDs, RBAC and `ate-controller`. If the release changed the worker pod template, every pool rolls again: wait as in step 3. Fields the new release added to WorkerPools, SandboxConfigs or CSIDriverConfigs are dropped from those objects. Remove them from your YAML files too, or `kubectl apply` rejects the files.
 
 The database schema stays new; the old API server drops fields it does not know when it rewrites a record.
 
@@ -250,10 +258,5 @@ go run ./cmd/ate-setup deploy atelet --config ~/ate-upgrade/old.yaml --rollout-t
 #### Roll back step 1
 
 ```bash
-go run ./cmd/ate-setup deploy ate-controller --config ~/ate-upgrade/old.yaml
 go run ./cmd/ate-setup deploy podcertificate-controller --config ~/ate-upgrade/old.yaml
 ```
-
-These commands restore the old CRDs, RBAC, `ate-controller` and `podcertificate-controller`. If the release changed the worker pod template, every pool rolls again: wait as in step 3. Fields the new release added to WorkerPools, 
-
-SandboxConfigs or CSIDriverConfigs are dropped from those objects. Remove them from your YAML files too, or `kubectl apply` rejects the files.
