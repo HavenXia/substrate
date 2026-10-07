@@ -3,14 +3,14 @@
 This runbook upgrades a running Agent Substrate install to a newer release in the same release window, meaning the same `v0.x`: for example, from v0.2.0 to v0.2.1. Between windows, for example from v0.1.x to v0.2.x, reinstall instead. 
 
 > [!NOTE]
-> TODO: Depends on the policy doc. Link its release policy (which versions this runbook upgrades between) and its version skew policy (which component versions can run together during the upgrade).
+> TODO: Depends on two policy docs that are not in the repository yet. Link the compatibility policy, which says which releases this runbook upgrades between, and the version skew policy, which says which component releases may run together during the upgrade and so sets the step order below.
 
 
 | Step | What changes | What running actors see | How long |
 |---|---|---|---|
 | 1 | podcertificate-controller | Nothing | A minute |
 | 2 | atelet, one node at a time | Nothing | Seconds to about 6 minutes per node |
-| 3 | workers | `SIGTERM`, then a 30-minute window to be suspended before `SIGKILL` | Minutes to hours per pool |
+| 3 | workers | `SIGTERM`, then a 30-minute window to be suspended before `SIGKILL` | Seconds to hours per pool |
 | 4 | ate-api-server, the CRDs and ate-controller, atenet, then SandboxConfig | API calls and long HTTP requests can be cut once; see step 4 | A few minutes, or as long as step 3 if workers roll again |
 
 podcertificate-controller signs the certificates the other components use, so it goes first. atelet and the workers go before ate-api-server and atenet, so that when the API server changes, every node already understands requests from either version. ate-controller and the CRDs follow the API server: ate-controller is a client of the API server, and new workers start from the pod template the old ate-controller renders. The SandboxConfig admission policy and the default SandboxConfig go last, once every worker can run what they allow. Rollback is the same list in reverse, from the old release. An actor that crashes along the way goes back to its last snapshot with one revert call.
@@ -102,9 +102,6 @@ If you build from source, build and push both worker images once. This touches n
 go run ./cmd/ate-setup publish worker-images --config ~/ate-upgrade/new.yaml | tee ~/ate-upgrade/worker-images.txt
 ```
 
-> [!NOTE]
-> TODO: Depends on the release policy in the policy doc: whether open source releases publish prebuilt images, where, and under which tag.
-
 Then move the pools. For each pool:
 
 1. Set the pool:
@@ -168,7 +165,7 @@ kubectl get deploy -A -l ate.dev/worker-pool
 This happens when this release changes the worker pod template. A pool is done rolling when READY shows `n/n`, and UP-TO-DATE and AVAILABLE both show `n`. Wait until every pool is done before you go on.
 
 > [!NOTE]
-> TODO: Depends on the version skew policy: whether a release may change the worker pod template within a major.
+> TODO: Depends on the version skew policy: whether a compatible release may change the worker pod template. If it may not, the pools never roll in this step, and this check and the second roll in the rollback go away.
 
 Then `atenet`:
 
@@ -185,7 +182,7 @@ go run ./cmd/ate-setup deploy sandboxconfig --config ~/ate-upgrade/new.yaml
 ```
 
 > [!NOTE]
-> TODO: Depends on the shape of the default SandboxConfig. Until each release ships it under its own name, this overwrites `gvisor-default` in place.
+> TODO: Depends on per-release SandboxConfig names. Today this overwrites `gvisor-default` in place, so a release with new sandbox binaries breaks the restore of actors suspended under the old ones. Once each release ships its default SandboxConfig under its own name, this step adds the new one and leaves the old one in place.
 
 - **Done:** all rollout status print `successfully rolled out`, `deploy ate-controller` and `deploy sandboxconfig` exit 0, and `kubectl -n ate-system get pods -l app=ate-controller` shows one pod, Running, with RESTARTS 0.
 - **Stuck:** an old pod keeps serving, or the new ate-controller pod keeps restarting. Roll back step 4 if you cannot fix it.
