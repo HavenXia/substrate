@@ -259,21 +259,54 @@ func TestPrepareOCIBundlesPause(t *testing.T) {
 			useTempNodeDirs(t)
 			const actorUID = "actor-uid-1"
 			s := &AteomHerder{imageCache: newImageVolumeStore(t)}
-			processes, err := s.prepareOCIBundles(t.Context(), actorUID, resources.ActorRef{}, spec, tc.pauseImage, "ateom-uid-1")
-			if err != nil {
+			if _, err := s.prepareOCIBundles(t.Context(), actorUID, resources.ActorRef{}, spec, tc.pauseImage, "ateom-uid-1"); err != nil {
 				t.Fatalf("prepareOCIBundles: %v", err)
-			}
-			if got, want := processes["app"].args, []string{"/bin/app"}; !slices.Equal(got, want) {
-				t.Errorf("app args = %v, want %v", got, want)
 			}
 			if _, err := os.Stat(filepath.Join(ateletpath.OCIBundlePath(actorUID, "app"), imagecache.OverlaySpecFileName)); err != nil {
 				t.Errorf("app bundle: %v", err)
 			}
-			_, err = os.Stat(ateletpath.OCIBundlePath(actorUID, ocispec.PauseContainer))
+			_, err := os.Stat(ateletpath.OCIBundlePath(actorUID, ocispec.PauseContainer))
 			if gotPause := err == nil; gotPause != tc.wantPause {
 				t.Errorf("pause bundle exists = %v, want %v (stat: %v)", gotPause, tc.wantPause, err)
 			}
 		})
+	}
+}
+
+// TestPrepareOCIBundlesFillsContainerSpec pins that each container's spec
+// carries its resolved args, env, capabilities and resource limits.
+func TestPrepareOCIBundlesFillsContainerSpec(t *testing.T) {
+	useTempNodeDirs(t)
+	host := imageVolumeTestRegistry(t)
+	image := host + "/actor:v1"
+	pushTestImage(t, image, singleFileLayer(t, "bin/app", "app"))
+	spec := &ateletpb.WorkloadSpec{
+		Containers: []*ateletpb.Container{{
+			Name:    "app",
+			Image:   image,
+			Command: []string{"/bin/app"},
+			Args:    []string{"serve"},
+			Env:     []*ateletpb.EnvEntry{{Name: "GREETING", Value: "hello"}},
+			SecurityContext: &ateletpb.SecurityContext{
+				Capabilities: &ateletpb.Capabilities{Add: []string{"NET_ADMIN"}, Drop: []string{"KILL"}},
+			},
+			Resources: &ateletpb.ResourceLimits{MemoryBytes: 1 << 30, CpuMillis: 500},
+		}},
+	}
+
+	s := &AteomHerder{imageCache: newImageVolumeStore(t)}
+	got, err := s.prepareOCIBundles(t.Context(), "actor-uid-1", resources.ActorRef{}, spec, "", "ateom-uid-1")
+	if err != nil {
+		t.Fatalf("prepareOCIBundles: %v", err)
+	}
+	want := []*ateompb.ContainerSpec{{
+		Args:         []string{"/bin/app", "serve"},
+		Env:          []string{"GREETING=hello", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
+		Capabilities: []string{"CAP_AUDIT_WRITE", "CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE"},
+		Resources:    &ateompb.ResourceLimits{MemoryBytes: 1 << 30, CpuMillis: 500},
+	}}
+	if diff := cmp.Diff(want, got, protocmp.Transform()); diff != "" {
+		t.Errorf("prepareOCIBundles container specs mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -949,32 +982,21 @@ func TestBuildAteomWorkloadSpecForwardsWakeupProbe(t *testing.T) {
 	}
 }
 
-func TestBuildAteomWorkloadSpecForwardsProcess(t *testing.T) {
+func TestBuildAteomWorkloadSpecForwardsContainerSpecs(t *testing.T) {
 	in := &ateletpb.WorkloadSpec{
-		Containers: []*ateletpb.Container{
-			{
-				Name:      "main",
-				Resources: &ateletpb.ResourceLimits{MemoryBytes: 1 << 30, CpuMillis: 500},
-			},
-			{Name: "plain"},
-		},
+		Containers: []*ateletpb.Container{{Name: "main"}, {Name: "sidecar"}},
 	}
-	processes := map[string]containerProcess{
-		"main": {args: []string{"/app", "serve"}, env: []string{"PATH=/bin"}, capabilities: []string{"CAP_KILL"}},
+	containerSpecs := []*ateompb.ContainerSpec{
+		{Args: []string{"/app", "serve"}},
+		{Args: []string{"/sidecar"}},
 	}
 	want := &ateompb.WorkloadSpec{
 		Containers: []*ateompb.Container{
-			{
-				Name:         "main",
-				Args:         []string{"/app", "serve"},
-				Env:          []string{"PATH=/bin"},
-				Capabilities: []string{"CAP_KILL"},
-				Resources:    &ateompb.ResourceLimits{MemoryBytes: 1 << 30, CpuMillis: 500},
-			},
-			{Name: "plain"},
+			{Name: "main", ContainerSpec: &ateompb.ContainerSpec{Args: []string{"/app", "serve"}}},
+			{Name: "sidecar", ContainerSpec: &ateompb.ContainerSpec{Args: []string{"/sidecar"}}},
 		},
 	}
-	got, err := buildAteomWorkloadSpec(in, processes)
+	got, err := buildAteomWorkloadSpec(in, containerSpecs)
 	if err != nil {
 		t.Fatalf("buildAteomWorkloadSpec failed: %v", err)
 	}

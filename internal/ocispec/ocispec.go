@@ -79,19 +79,20 @@ func ociResources(r *ateompb.ResourceLimits) *specs.LinuxResources {
 // Build returns a runtime-neutral OCI spec for an actor container.
 func Build(o Options) *specs.Spec {
 	container := o.Container
+	containerSpec := container.GetContainerSpec()
 	spec := &specs.Spec{
 		Process: &specs.Process{
 			User: specs.User{
 				UID: 0,
 				GID: 0,
 			},
-			Args: container.GetArgs(),
-			Env:  container.GetEnv(),
+			Args: containerSpec.GetArgs(),
+			Env:  containerSpec.GetEnv(),
 			Cwd:  "/",
 			Capabilities: &specs.LinuxCapabilities{
-				Bounding:  container.GetCapabilities(),
-				Effective: container.GetCapabilities(),
-				Permitted: container.GetCapabilities(),
+				Bounding:  containerSpec.GetCapabilities(),
+				Effective: containerSpec.GetCapabilities(),
+				Permitted: containerSpec.GetCapabilities(),
 				// Inheritable and Ambient stay empty; capabilities inherit via
 				// Bounding.
 				//
@@ -154,7 +155,7 @@ func Build(o Options) *specs.Spec {
 					Type: "mount",
 				},
 			},
-			Resources: ociResources(container.GetResources()),
+			Resources: ociResources(containerSpec.GetResources()),
 		},
 	}
 

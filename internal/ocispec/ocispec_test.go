@@ -55,8 +55,8 @@ func TestBuild_VolumeMounts(t *testing.T) {
 			SystemInfoVolumeRootsDir:  sysInfoDir,
 		},
 		Container: &ateompb.Container{
-			Name: "app",
-			Args: []string{"/app"},
+			Name:          "app",
+			ContainerSpec: &ateompb.ContainerSpec{Args: []string{"/app"}},
 			DurableDirVolumeMounts: []*ateompb.DurableDirVolumeMount{
 				{VolumeName: "data", MountPath: "/var/data"},
 				{VolumeName: "data", MountPath: "/home/counter"},
@@ -93,7 +93,7 @@ func TestBuild_VolumeMounts(t *testing.T) {
 
 // The container joins the network namespace ateom creates for the actor.
 func TestBuild_JoinsTheActorNetNS(t *testing.T) {
-	spec := Build(Options{ActorUID: "uid-a", Container: &ateompb.Container{Args: []string{"/app"}}})
+	spec := Build(Options{ActorUID: "uid-a", Container: &ateompb.Container{ContainerSpec: &ateompb.ContainerSpec{Args: []string{"/app"}}}})
 	i := slices.IndexFunc(spec.Linux.Namespaces, func(ns specs.LinuxNamespace) bool { return ns.Type == specs.NetworkNamespace })
 	if i < 0 {
 		t.Fatal("spec has no network namespace")
@@ -106,7 +106,7 @@ func TestBuild_JoinsTheActorNetNS(t *testing.T) {
 // The resolved set lands in bounding, effective and permitted only.
 func TestBuild_Capabilities(t *testing.T) {
 	want := []string{"CAP_CHOWN", "CAP_KILL"}
-	spec := Build(Options{Container: &ateompb.Container{Args: []string{"/app"}, Capabilities: want}})
+	spec := Build(Options{Container: &ateompb.Container{ContainerSpec: &ateompb.ContainerSpec{Args: []string{"/app"}, Capabilities: want}}})
 
 	caps := spec.Process.Capabilities
 	if caps == nil {
@@ -139,7 +139,7 @@ func TestBuild_Capabilities(t *testing.T) {
 
 // The pause container gets no capabilities.
 func TestBuild_NoCapabilitiesForPause(t *testing.T) {
-	spec := Build(Options{Container: &ateompb.Container{Args: []string{"/pause"}}})
+	spec := Build(Options{Container: &ateompb.Container{ContainerSpec: &ateompb.ContainerSpec{Args: []string{"/pause"}}}})
 
 	caps := spec.Process.Capabilities
 	if caps == nil {
@@ -163,7 +163,7 @@ func TestBuild_NoCapabilitiesForPause(t *testing.T) {
 
 func TestSave(t *testing.T) {
 	bundle := t.TempDir()
-	want := Build(Options{ActorUID: "uid-a", Container: &ateompb.Container{Args: []string{"/app"}}})
+	want := Build(Options{ActorUID: "uid-a", Container: &ateompb.Container{ContainerSpec: &ateompb.ContainerSpec{Args: []string{"/app"}}}})
 	if err := Save(bundle, want); err != nil {
 		t.Fatalf("Save() = %v", err)
 	}
@@ -241,17 +241,17 @@ func TestOCIResources_NegativeIsUnset(t *testing.T) {
 
 // A container without limits carries no linux.resources at all.
 func TestBuild_NoResourcesLeavesLinuxUntouched(t *testing.T) {
-	spec := Build(Options{Container: &ateompb.Container{Args: []string{"/app"}}})
+	spec := Build(Options{Container: &ateompb.Container{ContainerSpec: &ateompb.ContainerSpec{Args: []string{"/app"}}}})
 	if spec.Linux.Resources != nil {
 		t.Errorf("Linux.Resources = %v, want nil when no limits are declared", spec.Linux.Resources)
 	}
 }
 
 func TestBuild_ResourcesApplied(t *testing.T) {
-	spec := Build(Options{Container: &ateompb.Container{
+	spec := Build(Options{Container: &ateompb.Container{ContainerSpec: &ateompb.ContainerSpec{
 		Args:      []string{"/app"},
 		Resources: &ateompb.ResourceLimits{MemoryBytes: 67108864},
-	}})
+	}}})
 	if spec.Linux.Resources == nil || spec.Linux.Resources.Memory == nil {
 		t.Fatalf("Linux.Resources = %v, want a memory limit", spec.Linux.Resources)
 	}

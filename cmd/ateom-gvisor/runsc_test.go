@@ -47,7 +47,7 @@ func TestWriteSpec(t *testing.T) {
 	r := &runsc{
 		actorUID:   "uid-a",
 		actorDirs:  actorDirs,
-		containers: []*ateompb.Container{{Name: "app", Args: []string{"/app", "serve"}}},
+		containers: []*ateompb.Container{{Name: "app", ContainerSpec: &ateompb.ContainerSpec{Args: []string{"/app", "serve"}}}},
 	}
 	for name, wantArgs := range map[string][]string{
 		"app":                  {"/app", "serve"},

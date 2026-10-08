@@ -64,8 +64,8 @@ func durableVolumeNames(spec *ateompb.WorkloadSpec) []string {
 // capabilities and mounts nothing.
 func pauseContainer() *ateompb.Container {
 	return &ateompb.Container{
-		Name: ocispec.PauseContainer,
-		Args: []string{"/pause"},
+		Name:          ocispec.PauseContainer,
+		ContainerSpec: &ateompb.ContainerSpec{Args: []string{"/pause"}},
 	}
 }
 
