@@ -205,7 +205,7 @@ go run ./cmd/ate-setup deploy sandboxconfig --config ~/ate-upgrade/new.yaml
 ```
 
 > [!NOTE]
-> TODO: Depends on per-release SandboxConfig names. Today this overwrites `gvisor-default` in place, so a release with new sandbox binaries breaks the restore of actors suspended under the old ones. Once each release ships its default SandboxConfig under its own name, this step adds the new one and leaves the old one in place.
+> TODO: Depends on each release shipping its default SandboxConfig under its own name, on WorkerPool `configRef` taking effect, and on the sandbox upgrade guide. Today this step overwrites `gvisor-default` in place, so a release with new sandbox binaries breaks the restore of actors suspended under the old ones. Once those land, this step adds the new release's SandboxConfig and leaves the old one in place. A pool moves to the new one only when its owner changes its `configRef`, as the sandbox upgrade guide describes.
 
 - **Done:** all rollout status print `successfully rolled out`, `deploy ate-controller` and `deploy sandboxconfig` exit 0, and `kubectl -n ate-system get pods -l app=ate-controller` shows one pod, Running, with RESTARTS 0.
 - **Stuck:** an old pod keeps serving, or the new ate-controller pod keeps restarting. Roll back step 4 if you cannot fix it.
