@@ -1,9 +1,18 @@
 # Upgrade runbook
 
-This runbook upgrades a running Agent Substrate install to a newer release in the same release window, meaning the same `v0.x`: for example, from v0.2.0 to v0.2.1. Between windows, for example from v0.1.x to v0.2.x, reinstall instead. 
+This runbook upgrades a running Agent Substrate install to a newer release.
+
+| From → to | Supported |
+|---|---|
+| A later patch release of the same minor, for example 1.2.1 → 1.2.4 | Yes. Patch releases can be skipped |
+| The next minor release, for example 1.2.x → 1.3.y | Yes |
+| Skipping a minor release, for example 1.2.x → 1.4.y | No. Upgrade to 1.3 first |
+| A new major release, for example 1.x → 2.x | No. Reinstall |
+
+If an upgrade goes wrong, you can roll back to the release you upgraded from, and no further.
 
 > [!NOTE]
-> TODO: Depends on two policy docs that are not in the repository yet. Link the compatibility policy, which says which releases this runbook upgrades between, and the version skew policy, which says which component releases may run together during the upgrade and so sets the step order below.
+> TODO: Link the compatibility policy, which these rules come from, and the version skew policy, which sets the step order below, once both are in the repository.
 
 
 | Step | What changes | What running actors see | How long |
