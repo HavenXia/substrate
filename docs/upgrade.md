@@ -157,10 +157,7 @@ What to expect:
 - **Done:** Step 3 is done when every pool is done rolling with `kubectl get deploy -A -l ate.dev/worker-pool`. Go to Step 4 once done.
 - **Pace:** a WorkerPool replaces 10% of its workers per batch. New workers start wherever the scheduler finds room. With spare capacity, every batch has its `SIGTERM` within minutes and the old workers drain in parallel; without it, new workers stay Pending until old ones exit, up to 30 minutes per batch, so a large pool can take hours. 
 - **Stuck:** rollout status fails with `exceeded its progress deadline` (the roll goes on), or a worker pod stays Terminating for more than 60 minutes. Check `kubectl -n $NS get pods -l ate.dev/worker-pool=$WORKERPOOL`. A bad image stops the roll after the first batch: [roll back that pool](#roll-back-step-3).
-- **Actors:** each gets `SIGTERM` and 30 minutes to be suspended. Substrate does not suspend them. An actor that is not suspended by then becomes `CRASHED` and loses its work since its last snapshot.
-
-> [!NOTE]
-> TODO: link to the eviction section in the [API guide](api-guide.md), which will say how an actor is expected to get suspended within the 30 minutes.
+- **Actors:** each gets `SIGTERM` and 30 minutes to be suspended. Substrate does not suspend them. An actor that is not suspended by then becomes `CRASHED` and loses its work since its last snapshot. [Eviction](api-guide.md#eviction) in the API guide says what an actor needs to keep its state.
 
 ### Step 4. Upgrade the Substrate control plane
 
