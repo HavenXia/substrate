@@ -14,55 +14,58 @@ If an upgrade goes wrong, you can roll back to the release you upgraded from, an
 > [!NOTE]
 > TODO: Link the compatibility policy, which these rules come from, and the version skew policy, which sets the step order below, once both are in the repository.
 
-
 | Step | What changes | What running actors see | How long |
 |---|---|---|---|
 | 1 | podcertificate-controller | Nothing | A minute |
 | 2 | atelet, one node at a time | Nothing | Seconds to about 6 minutes per node |
 | 3 | workers | `SIGTERM`, then a 30-minute window to be suspended before `SIGKILL` | Seconds to hours per pool |
-| 4 | ate-api-server, the CRDs and ate-controller, atenet, then SandboxConfig | API calls and long HTTP requests can be cut once; see step 4 | A few minutes, or as long as step 3 if workers roll again |
+| 4 | ate-api-server, the CRDs and ate-controller, atenet, then SandboxConfig | API calls, long requests and outbound connections can be cut once; workers may get `SIGTERM` again. See step 4 | A few minutes, or as long as step 3 if workers roll again |
 
-podcertificate-controller signs the certificates the other components use, so it goes first. atelet and the workers go before ate-api-server and atenet, so that when the API server changes, every node already understands requests from either version. ate-controller and the CRDs follow the API server: ate-controller is a client of the API server, and new workers start from the pod template the old ate-controller renders. The SandboxConfig admission policy and the default SandboxConfig go last, once every worker can run what they allow. Rollback is the same list in reverse, from the old release. An actor that crashes along the way goes back to its last snapshot with one revert call.
+Why this order:
+
+- `podcertificate-controller` signs the certificates the other components use, so it goes first.
+- `atelet` and the workers go before `ate-api-server` and `atenet`, so that when the API server changes, every node already understands requests from either version.
+- `ate-controller` and the CRDs follow the API server: `ate-controller` is a client of the API server, and new workers start from the pod template the old `ate-controller` renders.
+- The `SandboxConfig` admission policy and the default `SandboxConfig` go last, once every worker can run what they allow.
+
+Rollback is the same list in reverse, from the old release. An actor that crashes along the way goes back to its last snapshot with one revert call.
 
 The system upgrade does not change the database engine, the CSI drivers `--setup-csi` installs, the Kubernetes version or the node OS version.
 
-## Before you start
+## Where am I?
 
-Check out both releases. `ate-setup` runs from the new checkout. The old checkout is kept for rollback. The installed release is `cluster.substrateVersion` in this cluster's install record, described below.
+Come back here after a break or a handoff. For a prebuilt install, each image's tag is its release. atelet moves in step 2, the pools in step 3, the rest in step 4:
 
 ```bash
-OLD_RELEASE=<installed release, for example v0.2.0>
-NEW_RELEASE=<new release, for example v0.2.1>
+kubectl -n ate-system get deploy,ds -o custom-columns='NAME:.metadata.name,IMAGE:.spec.template.spec.containers[0].image'
+kubectl get workerpools -A -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,IMAGE:.spec.workerImage'
+```
+
+## Before you start
+
+Every `ate-setup deploy` run records the settings it was given in `installs/` under the record directory: `ATE_RECORD_DIR` if set, by default `~/.cache/ate-setup` on Linux and `~/Library/Caches/ate-setup` on macOS. It prints the path as `recorded this configuration in <path>`. 
+
+The record's `cluster.substrateVersion` is the installed release. If this machine has no record of the cluster, write one from the settings you installed with ([operator-install.md](operator-install.md) lists them) and set `OLD_RELEASE` to the installed release yourself.
+
+Fill in the first three lines, then run the rest. `ate-setup` runs from the new checkout. The old checkout is kept for rollback.
+
+```bash
+NEW_RELEASE=v0.2.1                                   # change me
+RECORD=~/.cache/ate-setup/installs/my-cluster.yaml   # change me: this cluster's record
+kubectl config use-context my-cluster                # change me: keep it until the upgrade is done
+
+OLD_RELEASE=$(sed -n 's/^ *substrateVersion: //p' $RECORD)
 mkdir ~/ate-upgrade && cd ~/ate-upgrade
+cp $RECORD old.yaml && cp $RECORD new.yaml
 git clone --branch $OLD_RELEASE https://github.com/agent-substrate/substrate.git old
 git clone --branch $NEW_RELEASE https://github.com/agent-substrate/substrate.git new
 (cd old && go install ./cmd/kubectl-ate)
+cd new
 ```
-
-Point kubectl at the cluster you upgrade, and keep it there until the upgrade is done:
-
-```bash
-kubectl config use-context <context of the cluster>
-```
-
-Every `ate-setup deploy` run records the settings it was given in a file under `installs/` in the record directory `record.dir` names, and prints the path as `recorded this configuration in <path>`. Make two copies of this cluster's record:
-
-```bash
-cp <record> ~/ate-upgrade/old.yaml
-cp <record> ~/ate-upgrade/new.yaml
-```
-
-Check that the copy holds the settings you installed with. If it is missing or wrong, write the file from those settings; [operator-install.md](operator-install.md) lists them.
 
 A record holds no database connection strings. If you use an external database, export `ATE_API_POSTGRES_READ_WRITE_CONNECTION_STRING`, and `ATE_API_POSTGRES_OWNER_CONNECTION_STRING` if you set it, in the shell you run the steps from.
 
 Keep `old.yaml` as it is, for rollback. If you build from source, keep `new.yaml` the same: the checkout you run from decides the release. If you install prebuilt images, set `images.tag` in `new.yaml` to the new release.
-
-You will run the steps from the new checkout:
-
-```bash
-cd ~/ate-upgrade/new
-```
 
 > [!CAUTION]
 > Do not run `ate-setup deploy ate-system`, `ate-setup setup csi` or `ate-setup delete` during the upgrade. They change components out of upgrade order.
@@ -94,13 +97,15 @@ kubectl -n ate-system rollout status ds/atelet
 
 - **Progress:** `Waiting for daemon set "atelet" rollout to finish: 2 out of 5 new pods have been updated...`, then `... 4 of 5 updated pods are available...`.
 - **Done:** `daemon set "atelet" successfully rolled out`.
-- **Stuck:** the `N out of M` count does not move for more than about 6 minutes. A new atelet pod that cannot start stops the roll and leaves its node without atelet; if you cannot fix it quickly, [roll back step 2](#roll-back-step-2). A pod stuck in ContainerCreating usually means podcertificate-controller is not running.
+- **Stuck:** the `N out of M` count does not move for more than about 6 minutes. A new atelet pod that cannot start stops the roll and leaves its node without atelet; if you cannot fix it quickly, [roll back step 2](#roll-back-step-2). A pod stuck in ContainerCreating usually means podcertificate-controller is not running. If `deploy atelet` times out, the roll still goes on; keep watching.
 - **Actors:** running actors keep running. A node's atelet is down for a few seconds while it restarts.
 
 ### Step 3. Move each WorkerPool to the new worker image
 
 > [!NOTE]
 > Do not start step 3 until step 2 is done: new workers need the new atelet.
+>
+> Tell actor owners before you start: their running actors get `SIGTERM` in this step.
 >
 > Change the WorkerPool, not its Deployment: `ate-controller` overwrites edits to the Deployment.
 
@@ -121,8 +126,8 @@ Then move the pools. For each pool:
 1. Set the pool:
 
    ```bash
-   NS=<workerpool namespace>
-   WORKERPOOL=<workerpool name>
+   NS=my-namespace          # change me
+   WORKERPOOL=my-pool       # change me
    CLASS=$(kubectl -n $NS get workerpool $WORKERPOOL -o jsonpath='{.spec.sandboxClasses[0].name}')
    ```
 
@@ -135,15 +140,14 @@ Then move the pools. For each pool:
    With prebuilt images, set `NEW_IMAGE` to `ateom-$CLASS` from your image repo at the new tag, pinned by digest (`crane digest <image>` prints it).
 
 3. Check that `echo "$NS/$WORKERPOOL $CLASS $NEW_IMAGE"` shows `ateom-` plus the pool's CLASS and a full `@sha256:` digest. A bad image still removes the pool's first old worker.
-4. Patch the pool, wait until ate-controller moves its Deployment to the new image, and watch the roll:
+4. Patch the worker pool and wait until ate-controller moves its Deployment to the new image:
 
    ```bash
    kubectl -n $NS patch workerpool $WORKERPOOL --type merge -p "{\"spec\":{\"workerImage\":\"$NEW_IMAGE\"}}"
    kubectl -n $NS wait deployment/$WORKERPOOL --for=jsonpath='{.spec.template.spec.containers[0].image}'="$NEW_IMAGE" --timeout=2m
-   kubectl -n $NS rollout status deployment/$WORKERPOOL
    ```
 
-5. Once the first pool of a CLASS has one new worker running, patch the other pools of that CLASS without waiting for the roll to finish. A new worker is running when the newest ReplicaSet of the pool shows READY 1 or more:
+5. Start with a small pool of each CLASS that you can afford to disrupt. Once it has one new worker running, patch the other pools of that CLASS without waiting for the roll to finish. A new worker is running when the newest ReplicaSet of the pool shows READY 1 or more:
 
    ```bash
    kubectl -n $NS get rs -l ate.dev/worker-pool=$WORKERPOOL
@@ -153,15 +157,17 @@ Then move the pools. For each pool:
 
 What to expect:
 
-- **Progress:** `kubectl rollout status` prints how many new workers are updated and available. Ctrl-C to safely stop the watch.
+- **Progress:** `kubectl -n $NS rollout status deployment/$WORKERPOOL` prints how many new workers are updated and available. Ctrl-C stops only the watch.
 - **Done:** Step 3 is done when every pool is done rolling with `kubectl get deploy -A -l ate.dev/worker-pool`. Go to Step 4 once done.
-- **Pace:** a WorkerPool replaces 10% of its workers per batch. New workers start wherever the scheduler finds room. With spare capacity, every batch has its `SIGTERM` within minutes and the old workers drain in parallel; without it, new workers stay Pending until old ones exit, up to 30 minutes per batch, so a large pool can take hours. 
+- **Pace:** a WorkerPool replaces 10% of its workers per batch, rounded down, at least one. With spare capacity, every batch has its `SIGTERM` within minutes and the old workers drain in parallel. Without it, each batch waits up to 30 minutes for old workers to exit.
 - **Stuck:** rollout status fails with `exceeded its progress deadline` (the roll goes on), or a worker pod stays Terminating for more than 60 minutes. Check `kubectl -n $NS get pods -l ate.dev/worker-pool=$WORKERPOOL`. A bad image stops the roll after the first batch: [roll back that pool](#roll-back-step-3).
 - **Actors:** each gets `SIGTERM` and 30 minutes to be suspended. Substrate does not suspend them. An actor that is not suspended by then becomes `CRASHED` and loses its work since its last snapshot. [Eviction](api-guide.md#eviction) in the API guide says what an actor needs to keep its state.
 
 ### Step 4. Upgrade the Substrate control plane
 
-First the Substrate API server. The first new API server pod migrates the database schema.
+#### 4a. ate-api-server
+
+The first new API server pod migrates the database schema.
 
 ```bash
 cd ~/ate-upgrade/new
@@ -170,24 +176,26 @@ kubectl -n ate-system rollout status deploy/ate-api-server
 kubectl ate get actors -A
 ```
 
-Then the CRDs and `ate-controller`:
+- **Done:** rollout status prints `successfully rolled out` and `kubectl ate get actors -A` lists your actors.
+- **Stuck:** rollout status does not finish, or a new pod keeps restarting. [Roll back step 4](#roll-back-step-4).
+- **API clients:** an API call can fail once with a retriable error while an API server pod restarts. Retry it.
+
+#### 4b. CRDs and ate-controller
 
 ```bash
 go run ./cmd/ate-setup deploy ate-controller --config ~/ate-upgrade/new.yaml
-```
-
-This applies the new CRDs (`WorkerPool`, `SandboxConfig` and `CSIDriverConfig`) and ate-controller's RBAC, waits until the CRDs are established, then deploys the new `ate-controller` and waits for it. Rerunning is safe. A minute after the new pod starts, check whether it is replacing workers:
-
-```bash
 kubectl get deploy -A -l ate.dev/worker-pool
 ```
 
-This happens when this release changes the worker pod template. A pool is done rolling when READY shows `n/n`, and UP-TO-DATE and AVAILABLE both show `n`. Wait until every pool is done before you go on.
+This applies the new CRDs and ate-controller's RBAC, then deploys the new `ate-controller`. Rerunning is safe. If this release changes the worker pod template, the new ate-controller rolls every pool again, with another round of `SIGTERM`: wait as in step 3.
 
 > [!NOTE]
 > TODO: Depends on the version skew policy: whether a compatible release may change the worker pod template. If it may not, the pools never roll in this step, and this check and the second roll in the rollback go away.
 
-Then `atenet`:
+- **Done:** the command exits 0, `kubectl -n ate-system get pods -l app=ate-controller` shows one pod, Running, with RESTARTS 0, and every pool shows READY `n/n` with UP-TO-DATE and AVAILABLE `n`.
+- **Stuck:** the new ate-controller pod keeps restarting. [Roll back step 4](#roll-back-step-4).
+
+#### 4c. atenet
 
 ```bash
 go run ./cmd/ate-setup deploy atenet --config ~/ate-upgrade/new.yaml
@@ -195,21 +203,23 @@ kubectl -n ate-system rollout status deploy/atenet-router
 kubectl -n ate-system rollout status deploy/atenet-egress
 ```
 
-Then the `SandboxConfig` admission policy and the default `SandboxConfig`:
+- **Done:** both print `successfully rolled out`.
+- **Stuck:** rollout status does not finish, or a new pod keeps restarting. [Roll back step 4](#roll-back-step-4).
+- **Actors:** a request to an actor, or an outbound connection, still open about 15 seconds after its `atenet` pod starts draining can be cut once.
+
+#### 4d. SandboxConfig
 
 ```bash
 go run ./cmd/ate-setup deploy sandboxconfig --config ~/ate-upgrade/new.yaml
 ```
 
-This does not roll workers.
+This applies the SandboxConfig admission policy and the default SandboxConfig. It does not roll workers.
 
 > [!NOTE]
 > TODO: Today this step overwrites `gvisor-default` in place. Once each release ships its own SandboxConfig, it adds the new one, and WorkerPools without a `configRef` switch to it, so some suspended actors may cold boot. Link the sandbox upgrade guide.
 
-- **Done:** all rollout status print `successfully rolled out`, `deploy ate-controller` and `deploy sandboxconfig` exit 0, and `kubectl -n ate-system get pods -l app=ate-controller` shows one pod, Running, with RESTARTS 0.
-- **Stuck:** an old pod keeps serving, or the new ate-controller pod keeps restarting. Roll back step 4 if you cannot fix it.
-- **API clients:** an API call can fail once with a retriable error while an API server pod restarts. Retry it.
-- **Actors:** when the router restarts, an HTTP request that takes longer than about 10 seconds can be cut once.
+- **Done:** the command exits 0.
+- **Stuck:** the command fails. [Roll back step 4](#roll-back-step-4).
 
 Then install the new `kubectl ate` with `go install ./cmd/kubectl-ate`. Actor owners can now use API fields and commands new in this release, and you can set WorkerPool, SandboxConfig and CSIDriverConfig fields new in this release.
 
@@ -256,11 +266,12 @@ The database schema stays new; the old API server drops fields it does not know 
 
 #### Roll back step 3
 
-Set each patched pool back to its IMAGE in `~/ate-upgrade/before-workerpools.txt`, with the exact string.
+Set each patched pool back to its image in `~/ate-upgrade/before-workerpools.txt`:
+
 ```bash
-NS=<workerpool namespace>
-WORKERPOOL=<workerpool name>
-OLD_IMAGE=<IMAGE for this pool in before-workerpools.txt>
+NS=my-namespace          # change me
+WORKERPOOL=my-pool       # change me
+OLD_IMAGE=$(awk -v ns=$NS -v name=$WORKERPOOL '$1 == ns && $2 == name {print $4}' ~/ate-upgrade/before-workerpools.txt)
 kubectl -n $NS patch workerpool $WORKERPOOL --type merge -p "{\"spec\":{\"workerImage\":\"$OLD_IMAGE\"}}"
 ```
 
@@ -270,8 +281,7 @@ If you paused a WorkerPool, resume it now with `kubectl -n $NS rollout resume de
 kubectl -n $NS rollout status deployment/$WORKERPOOL
 ```
 
-If a WorkerPool was partway through a roll, only workers already on the new image are replaced. Every new version worker is replaced again, with another round of `SIGTERM`. Wait as in [step 3](#step-3-move-each-workerpool-to-the-new-worker-image).
-
+Only workers already on the new image are replaced, each with another round of rolling. Wait as in [step 3](#step-3-move-each-workerpool-to-the-new-worker-image).
 
 #### Roll back step 2
 

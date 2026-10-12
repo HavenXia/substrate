@@ -39,8 +39,9 @@ likely be split in the future for better scalability.)
   requests finish instead of resetting. The whole sequence must fit within
   `terminationGracePeriodSeconds` (see the manifest comments). An upgrade
   rolls the router as an ordinary Deployment update (see
-  [docs/upgrade.md](../../docs/upgrade.md)); the drain is what makes each old
-  pod's termination lossless.
+  [docs/upgrade.md](../../docs/upgrade.md)). The drain lets each old pod's
+  requests finish, except one still open about 15 seconds after the drain
+  starts, which is cut.
 
 RBAC permissions:
 * get, list, watch on ate-system EndpointSlices
