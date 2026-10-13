@@ -27,17 +27,11 @@ import (
 	"github.com/agent-substrate/substrate/cmd/ate-setup/internal/log"
 )
 
-// crdGVK identifies the CRDs whose presence EnsureCRDs checks for.
+// crdGVK is the kind of a CustomResourceDefinition.
 var crdGVK = schema.GroupVersionKind{
 	Group:   "apiextensions.k8s.io",
 	Version: "v1",
 	Kind:    "CustomResourceDefinition",
-}
-
-// ateCRDs are the custom resources the control plane and demos depend on.
-var ateCRDs = []string{
-	"workerpools.ate.dev",
-	"sandboxconfigs.ate.dev",
 }
 
 // DeployOptions carries the per-invocation choices for DeployAteSystem.
@@ -466,26 +460,58 @@ func (e *Env) DeploySandboxConfig(ctx context.Context) error {
 	return e.Kube.ApplyPath(ctx, e.Cfg.Manifest("sandboxconfig-gvisor.yaml"))
 }
 
-// EnsureCRDs installs the CRDs only if they are missing. Component redeploys
-// use this so they do not pay for a full CRD apply on every run.
+// EnsureCRDs creates the generated CRDs that are missing. Existing CRDs and
+// RBAC change only through DeployCRDs, so a component redeploy cannot move them.
 func (e *Env) EnsureCRDs(ctx context.Context) error {
 	log.Step("ensure_crds")
 
-	allPresent := true
-	for _, name := range ateCRDs {
-		present, err := e.Kube.Exists(ctx, crdGVK, "", name)
-		if err != nil {
-			return err
-		}
-		if !present {
-			allPresent = false
-			break
-		}
+	crds, err := e.generatedCRDs()
+	if err != nil {
+		return err
 	}
-	if allPresent {
+	missing, err := missingCRDs(crds, func(name string) (bool, error) {
+		return e.Kube.Exists(ctx, crdGVK, "", name)
+	})
+	if err != nil {
+		return err
+	}
+	if len(missing) == 0 {
 		return nil
 	}
-	return e.DeployCRDs(ctx)
+	if err := e.Kube.Apply(ctx, missing); err != nil {
+		return err
+	}
+	return e.waitCRDsEstablished(ctx, missing)
+}
+
+// generatedCRDs loads the generated CRDs, leaving out the RBAC beside them.
+func (e *Env) generatedCRDs() ([]*unstructured.Unstructured, error) {
+	objs, err := kube.LoadPath(e.Cfg.Manifest("generated"))
+	if err != nil {
+		return nil, err
+	}
+	var crds []*unstructured.Unstructured
+	for _, obj := range objs {
+		if obj.GroupVersionKind() == crdGVK {
+			crds = append(crds, obj)
+		}
+	}
+	return crds, nil
+}
+
+// missingCRDs returns the CRDs that exists reports absent.
+func missingCRDs(crds []*unstructured.Unstructured, exists func(name string) (bool, error)) ([]*unstructured.Unstructured, error) {
+	var missing []*unstructured.Unstructured
+	for _, crd := range crds {
+		present, err := exists(crd.GetName())
+		if err != nil {
+			return nil, err
+		}
+		if !present {
+			missing = append(missing, crd)
+		}
+	}
+	return missing, nil
 }
 
 // DeployCRDs applies the generated CRDs and RBAC, waiting for them to reach Established condition.
@@ -494,8 +520,17 @@ func (e *Env) DeployCRDs(ctx context.Context) error {
 	if err := e.ResolveAndApply(ctx, e.Cfg.Manifest("generated")); err != nil {
 		return err
 	}
-	for _, name := range ateCRDs {
-		if err := e.Kube.WaitCondition(ctx, crdGVK, "", name, "Established", 30*time.Second); err != nil {
+	crds, err := e.generatedCRDs()
+	if err != nil {
+		return err
+	}
+	return e.waitCRDsEstablished(ctx, crds)
+}
+
+// waitCRDsEstablished waits until the CRDs are served.
+func (e *Env) waitCRDsEstablished(ctx context.Context, crds []*unstructured.Unstructured) error {
+	for _, crd := range crds {
+		if err := e.Kube.WaitCondition(ctx, crdGVK, "", crd.GetName(), "Established", 30*time.Second); err != nil {
 			return err
 		}
 	}
