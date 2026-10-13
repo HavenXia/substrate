@@ -90,6 +90,9 @@ func (e *Env) CreateAPIServerEnvVars(ctx context.Context) error {
 		}
 	}
 	if ownerDSN == "" {
+		if err := e.refuseDroppingOwnerLogin(ctx); err != nil {
+			return err
+		}
 		ownerDSN = readWriteDSN
 	}
 	schema := e.Cfg.PostgresSchemaName()
@@ -174,6 +177,21 @@ func (e *Env) refuseBundledOverExternal(ctx context.Context) error {
 		return nil
 	}
 	return fmt.Errorf("ate-api-server uses an external PostgreSQL, but ATE_API_POSTGRES_READ_WRITE_CONNECTION_STRING is not set")
+}
+
+// refuseDroppingOwnerLogin stops a run that names no owner connection string
+// from replacing a separate owner login with the read-write one. The bundled
+// database's owner login is ate-setup's own, so it does not count.
+func (e *Env) refuseDroppingOwnerLogin(ctx context.Context) error {
+	recordedReadWrite, recordedOwner, err := e.recordedConnectionStrings(ctx)
+	if err != nil {
+		return err
+	}
+	if recordedOwner == recordedReadWrite || usesBundledPostgres(recordedOwner) {
+		return nil
+	}
+	return fmt.Errorf("ate-api-server uses a separate PostgreSQL owner login, but ATE_API_POSTGRES_OWNER_CONNECTION_STRING is not set; " +
+		"set it to the read-write connection string to use one login")
 }
 
 // recordedConnectionStrings reads the connection strings in the cluster's
