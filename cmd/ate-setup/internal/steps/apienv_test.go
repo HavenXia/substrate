@@ -151,6 +151,60 @@ func TestCreateAPIServerEnvVarsRejectsCustomBundledIdentity(t *testing.T) {
 	}
 }
 
+// A run without a connection string must not point an install that uses an
+// external PostgreSQL at the bundled one: records hold no connection strings,
+// so a forgotten export is the common way to get here.
+func TestCreateAPIServerEnvVarsKeepsExternalPostgres(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		cloudSQL config.CloudSQLConfig
+		recorded string
+		wantErr  bool
+	}{
+		{name: "fresh install", recorded: ""},
+		{name: "bundled install", recorded: bundledPostgresDSN(postgressetup.ReadWriteUser)},
+		{name: "external install", recorded: "postgres://runtime@database/atepg", wantErr: true},
+		{
+			// An explicitly empty instance is how an operator leaves Cloud SQL.
+			name:     "leaving Cloud SQL",
+			cloudSQL: config.CloudSQLConfig{InstanceSet: true},
+			recorded: "user=svc@p.iam host=127.0.0.1 port=5432 dbname=atepg sslmode=disable",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Config{
+				PostgresReadWriteRole: config.DefaultPostgresReadWriteRole, PostgresOwnerRole: config.DefaultPostgresOwnerRole,
+				CloudSQL: tc.cloudSQL,
+			}
+			e := &Env{Cfg: &cfg, Kube: fakeKube(t,
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: NamespaceAteSystem}},
+				&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: ConfigMapAPIEnvVars, Namespace: NamespaceAteSystem}},
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: SecretAPIEnvVars, Namespace: NamespaceAteSystem},
+					Data:       map[string][]byte{"ATE_API_POSTGRES_READ_WRITE_CONNECTION_STRING": []byte(tc.recorded)},
+				},
+			)}
+			err := e.CreateAPIServerEnvVars(t.Context())
+			if !tc.wantErr {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "ATE_API_POSTGRES_READ_WRITE_CONNECTION_STRING is not set") {
+				t.Fatalf("CreateAPIServerEnvVars() error = %v, want the missing connection string named", err)
+			}
+			secret, err := e.Kube.GetSecret(t.Context(), NamespaceAteSystem, SecretAPIEnvVars)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := string(secret.Data["ATE_API_POSTGRES_READ_WRITE_CONNECTION_STRING"]); got != tc.recorded || len(secret.StringData) != 0 {
+				t.Fatalf("Secret rewritten: Data %q, StringData %v", got, secret.StringData)
+			}
+		})
+	}
+}
+
 func TestCreateAPIServerEnvVarsPoolSize(t *testing.T) {
 	cfg := config.Config{
 		PostgresReadWriteConnectionString: "postgres://runtime@postgres/atepg",
