@@ -306,7 +306,7 @@ func (e *Env) DeployAteAPIServer(ctx context.Context) error {
 			return err
 		}
 	}
-	manifest, err := e.renderResolve(ctx, e.Cfg.Manifest("ate-api-server.yaml"))
+	manifest, err := e.renderResolve(ctx, e.apiServerManifestPath())
 	if err != nil {
 		return err
 	}
@@ -318,6 +318,14 @@ func (e *Env) DeployAteAPIServer(ctx context.Context) error {
 		return err
 	}
 	return e.Kube.RolloutStatus(ctx, kube.KindDeployment, e.Namespace(), "ate-api-server", e.Cfg.RolloutTimeout)
+}
+
+// apiServerManifestPath is the ate-api-server manifest for the environment.
+func (e *Env) apiServerManifestPath() string {
+	if e.Cfg.Kind {
+		return e.Cfg.Manifest("kind", "ate-api-server")
+	}
+	return e.Cfg.Manifest("ate-api-server.yaml")
 }
 
 // DeployAteController redeploys only ate-controller.

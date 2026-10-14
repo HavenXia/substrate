@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -181,5 +182,42 @@ func TestMissingCRDsLeavesPresentOnesAlone(t *testing.T) {
 			names = append(names, m.GetName())
 		}
 		t.Errorf("missingCRDs = %v, want only csidriverconfigs.ate.dev", names)
+	}
+}
+
+// deploy apiserver has to apply the ate-api-server that deploy ate-system
+// does. On kind the bundle points its object-store plugin at rustfs, and a
+// redeploy from the base file would fall back to GCS and never start.
+func TestAPIServerManifestMatchesSystemBundle(t *testing.T) {
+	for _, tc := range []struct {
+		router string
+		kind   bool
+	}{
+		{config.RouterEnvoy, false},
+		{config.RouterEnvoy, true},
+		{config.RouterAgentgateway, false},
+		{config.RouterAgentgateway, true},
+	} {
+		e := &Env{Cfg: &config.Config{Root: repoRoot(t), Router: tc.router, Kind: tc.kind}}
+		deployment := func(path string) *unstructured.Unstructured {
+			manifest, err := e.render(path)
+			if err != nil {
+				t.Fatalf("render(%s): %v", path, err)
+			}
+			objs, err := kube.DecodeManifestBytes(manifest)
+			if err != nil {
+				t.Fatalf("decoding %s: %v", path, err)
+			}
+			dep := findObject(objs, "Deployment", "ate-api-server")
+			if dep == nil {
+				t.Fatalf("%s has no deployment/ate-api-server", path)
+			}
+			return dep
+		}
+		bundle := deployment(e.Cfg.Path(SystemOverlay(e.Cfg)))
+		standalone := deployment(e.apiServerManifestPath())
+		if diff := cmp.Diff(bundle.Object, standalone.Object); diff != "" {
+			t.Errorf("router=%s kind=%v: deploy apiserver renders a different ate-api-server than the system bundle (-bundle +standalone):\n%s", tc.router, tc.kind, diff)
+		}
 	}
 }

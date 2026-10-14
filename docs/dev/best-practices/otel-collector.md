@@ -428,8 +428,9 @@ the worker pods it creates, and `atenet-router`'s
 `--otlp-collector-address`, which is what its Envoy is given over xDS.
 
 Rather than editing the base manifests, prefer a kustomize overlay that
-patches the variable — see `manifests/ate-install/kind/kustomization.yaml`
-for a worked example.
+replaces the `ate-otel-config` ConfigMap — see
+`manifests/ate-install/kind/ate-otel-config.yaml`, which the kind overlay
+lists instead of the base file, for a worked example.
 
 ### A Note on Logs
 

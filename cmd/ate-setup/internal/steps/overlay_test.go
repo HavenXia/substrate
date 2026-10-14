@@ -441,6 +441,12 @@ func TestRenderCordonControlPlane(t *testing.T) {
 			want: []string{"ate-api-server"},
 		},
 		{
+			name: "kind api server overlay",
+			cfg:  config.Config{Kind: true},
+			path: func(e *Env) string { return e.apiServerManifestPath() },
+			want: []string{"ate-api-server"},
+		},
+		{
 			name: "podcert file",
 			path: func(e *Env) string { return e.Cfg.Manifest("pod-certificate-controller.yaml") },
 			want: []string{"podcertificate-controller"},
