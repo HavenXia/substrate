@@ -19,7 +19,7 @@ If an upgrade goes wrong, you can roll back to the release you upgraded from, an
 | 1 | podcertificate-controller | Nothing | A minute |
 | 2 | atelet, one node at a time | Nothing | Seconds to about 6 minutes per node |
 | 3 | workers | `SIGTERM`, then a 30-minute window to be suspended before `SIGKILL` | Seconds to hours per pool |
-| 4 | ate-api-server, the CRDs and ate-controller, atenet, then SandboxConfig | API calls, long requests and outbound connections can be cut once; workers may get `SIGTERM` again. See step 4 | A few minutes, or as long as step 3 if workers roll again |
+| 4 | ate-api-server, the CRDs and ate-controller, atenet, SandboxConfig, then the rest of the system bundle | API calls, long requests and outbound connections can be cut once; workers may get `SIGTERM` again. See step 4 | A few minutes, or as long as step 3 if workers roll again |
 
 Rollback is the same list in reverse, from the old release. An actor that crashes along the way goes back to its last snapshot with `kubectl ate revert actor <name> -a <atespace>`.
 
@@ -74,7 +74,7 @@ Run every step from this shell. A record holds no database connection strings: w
 Keep `old.yaml` as it is, for rollback. With prebuilt images, `new.yaml` now names the new tag. From source, the checkout you run from decides the release.
 
 > [!CAUTION]
-> Do not run `ate-setup deploy ate-system`, `ate-setup setup csi` or `ate-setup delete` during the upgrade. They change components out of upgrade order.
+> Do not run `ate-setup setup csi` or `ate-setup delete` during the upgrade, or `ate-setup deploy ate-system` before step 4e. They change components out of upgrade order.
 
 ## Upgrade
 
@@ -227,6 +227,18 @@ This applies the SandboxConfig admission policy and the default SandboxConfig. I
 - **Done:** the command exits 0.
 - **Stuck:** the command fails. [Roll back step 4](#roll-back-step-4).
 
+#### 4e. The rest of the system bundle
+
+```bash
+go run ./cmd/ate-setup deploy ate-system --config ~/ate-upgrade/new.yaml --setup-csi=none
+```
+
+This applies what the steps above do not, such as the ate-system NetworkPolicies and the bundled PostgreSQL. The components above are already on the new release and do not roll again. `--setup-csi=none` leaves the CSI drivers as they are. Rerunning is safe.
+
+- **Done:** the command exits 0.
+- **Stuck:** the command fails. [Roll back step 4](#roll-back-step-4).
+- **API clients:** if the release changes the bundled PostgreSQL, it restarts once, and API calls fail until it is back.
+
 Then install the new `kubectl ate` with `go install ./cmd/kubectl-ate`. Actor owners can now use API fields and commands new in this release, and you can set WorkerPool, SandboxConfig and CSIDriverConfig fields new in this release.
 
 The upgrade is done when step 4 is done and [Where am I?](#where-am-i) shows every component and pool moved, every pool done rolling and none paused. Keep `~/ate-upgrade` while you might still roll back, then delete it.
@@ -268,7 +280,7 @@ go install ./cmd/kubectl-ate
 
 `deploy ate-controller` restores the old CRDs, RBAC and `ate-controller`. If the release changed the worker pod template, every pool rolls again: wait as in step 3. Fields the new release added to WorkerPools, SandboxConfigs or CSIDriverConfigs are dropped from those objects. Remove them from your YAML files too, or `kubectl apply` rejects the files.
 
-The database schema stays new; the old API server drops fields it does not know when it rewrites a record.
+The database schema stays new; the old API server drops fields it does not know when it rewrites a record. Step 4e is not undone either: the NetworkPolicies and the bundled PostgreSQL stay as the new release left them.
 
 #### Roll back step 3
 
