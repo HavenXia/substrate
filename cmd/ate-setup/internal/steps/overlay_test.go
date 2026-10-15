@@ -635,7 +635,7 @@ func TestRenderFakeDataPlane(t *testing.T) {
 		{
 			name:       "kind atelet overlay",
 			cfg:        config.Config{Kind: true},
-			path:       func(e *Env) string { return e.Cfg.Path(installDir + "/kind/atelet") },
+			path:       func(e *Env) string { return e.ateletManifestPath() },
 			wantAtelet: true, wantStorage: "s3",
 		},
 		{

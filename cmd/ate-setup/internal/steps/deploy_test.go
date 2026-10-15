@@ -185,10 +185,10 @@ func TestMissingCRDsLeavesPresentOnesAlone(t *testing.T) {
 	}
 }
 
-// deploy apiserver has to apply the ate-api-server that deploy ate-system
-// does. On kind the bundle points its object-store plugin at rustfs, and a
-// redeploy from the base file would fall back to GCS and never start.
-func TestAPIServerManifestMatchesSystemBundle(t *testing.T) {
+// A single-component redeploy has to apply what deploy ate-system does. On
+// kind the bundle points the object-store plugins at rustfs, and a redeploy
+// from a base file would fall back to GCS and never start.
+func TestComponentManifestsMatchSystemBundle(t *testing.T) {
 	for _, tc := range []struct {
 		router string
 		kind   bool
@@ -199,7 +199,7 @@ func TestAPIServerManifestMatchesSystemBundle(t *testing.T) {
 		{config.RouterAgentgateway, true},
 	} {
 		e := &Env{Cfg: &config.Config{Root: repoRoot(t), Router: tc.router, Kind: tc.kind}}
-		deployment := func(path string) *unstructured.Unstructured {
+		render := func(path string) []*unstructured.Unstructured {
 			manifest, err := e.render(path)
 			if err != nil {
 				t.Fatalf("render(%s): %v", path, err)
@@ -208,16 +208,23 @@ func TestAPIServerManifestMatchesSystemBundle(t *testing.T) {
 			if err != nil {
 				t.Fatalf("decoding %s: %v", path, err)
 			}
-			dep := findObject(objs, "Deployment", "ate-api-server")
-			if dep == nil {
-				t.Fatalf("%s has no deployment/ate-api-server", path)
-			}
-			return dep
+			return objs
 		}
-		bundle := deployment(e.Cfg.Path(SystemOverlay(e.Cfg)))
-		standalone := deployment(e.apiServerManifestPath())
-		if diff := cmp.Diff(bundle.Object, standalone.Object); diff != "" {
-			t.Errorf("router=%s kind=%v: deploy apiserver renders a different ate-api-server than the system bundle (-bundle +standalone):\n%s", tc.router, tc.kind, diff)
+		bundle := render(e.Cfg.Path(SystemOverlay(e.Cfg)))
+		for _, component := range []struct {
+			kind, name, path string
+		}{
+			{"Deployment", "ate-api-server", e.apiServerManifestPath()},
+			{"DaemonSet", "atelet", e.ateletManifestPath()},
+		} {
+			want := findObject(bundle, component.kind, component.name)
+			got := findObject(render(component.path), component.kind, component.name)
+			if want == nil || got == nil {
+				t.Fatalf("router=%s kind=%v: %s/%s missing from the system bundle or %s", tc.router, tc.kind, component.kind, component.name, component.path)
+			}
+			if diff := cmp.Diff(want.Object, got.Object); diff != "" {
+				t.Errorf("router=%s kind=%v: %s renders a different %s/%s than the system bundle (-bundle +standalone):\n%s", tc.router, tc.kind, component.path, component.kind, component.name, diff)
+			}
 		}
 	}
 }
