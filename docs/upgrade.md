@@ -198,7 +198,7 @@ go run ./cmd/ate-setup deploy ate-controller --config ~/ate-upgrade/new.yaml
 
 This applies the new CRDs and ate-controller's RBAC, then deploys the new `ate-controller`. Rerunning is safe. Within a major the worker pod template stays the same, so no pool rolls.
 
-- **Done:** the command exits 0, and `kubectl -n ate-system get pods -l app=ate-controller` shows one pod, Running, with RESTARTS 0.
+- **Done:** the command exits 0, `kubectl -n ate-system get pods -l app=ate-controller` shows one pod, Running, with RESTARTS 0, and a minute later `kubectl get deploy -A -l ate.dev/worker-pool` still shows UP-TO-DATE `n` for every pool.
 - **Stuck:** the new ate-controller pod keeps restarting. [Roll back step 4](#roll-back-step-4).
 
 #### 4c. atenet

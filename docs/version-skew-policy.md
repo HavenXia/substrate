@@ -2,6 +2,8 @@
 
 The [compatibility policy](https://docs.google.com/document/d/1obSIvfcafLNniLYTQCcT2eCgxHqa2AQ3Ga7YTsju49s/edit?usp=sharing&resourcekey=0-5VqJ13Vj1QctB7SnnfmtkQ) says what may change between two releases.
 
+<!-- TODO: Link the compatibility policy in the repository once it is checked in. -->
+
 This document says which releases of the substrate components may run together, and the order in which they are upgraded so that only supported combinations occur. The [upgrade runbook](upgrade.md) implements it and may add restrictions of its own.
 
 ## Scope
@@ -18,8 +20,8 @@ Patch releases add no API fields, public or internal, and no schema migrations.
 
 * `ate-api-server`: serves the public API, calls `atelet`, talks to the database.
 * `ate-controller`: renders WorkerPools into Deployments, registers workers with `ate-api-server`.
-* `atelet`: one pod per node (DaemonSet), drives the `ateom` processes on its node.
-* Workers: the pods of a WorkerPool, running `ateom` and the actors.
+* `atelet`: one pod per node (DaemonSet), drives the `ateworker` processes on its node.
+* Workers: the pods of a WorkerPool, running `ateworker` and the actors.
 * `atenet`: router and egress gateway.
 * `podcertificate-controller`: signs the certificates components present to each other.
 * Clients: `kubectl-ate` and anything else using the public API.
@@ -36,9 +38,9 @@ The components are ordered: `podcertificate-controller`, `atelet`, workers, `ate
   * The API schema is not shared. Until every `ate-api-server` replica is at N+1, a request can reach an N replica, which rejects fields new in N+1. So clients must not use fields new in N+1 until `ate-api-server` finishes rolling.
   * The database schema is shared. The first N+1 `ate-api-server` replica migrates it, so `ate-api-server` replicas at N and N+1 use the N+1 database schema while `ate-api-server` rolls.
 
-So during an upgrade from N to N+1, a new `atelet` drives old `ateom` processes on its node, new workers talk to an old `ate-api-server`, an old `ate-controller` renders Deployments for new workers, and old `ate-controller` and clients talk to a new `ate-api-server`.
+So during an upgrade from N to N+1, a new `atelet` drives old `ateworker` processes on its node, a new `atelet` calls an old `ate-api-server`, an old `ate-controller` renders Deployments for new workers, and old `ate-controller` and clients talk to a new `ate-api-server`.
 
-The reverse pairs are not supported: in particular, a worker must not be newer than the `atelet` on its node, and `ate-api-server` must not be newer than any worker.
+The reverse pairs are not supported: in particular, a worker must not be newer than the `atelet` on its node, and `ate-api-server` must not be newer than any worker. `ate-api-server` reaches the workers through `atelet`, so it must not ask a worker for something that worker's release cannot do.
 
 ## Requirement of a release
 
@@ -46,9 +48,9 @@ The skew rules above hold only if every release keeps the following.
 
 ### Worker pod template
 
-`ate-controller` upgrades after the workers. So the workers start the `ateom` N+1 image with the Deployment `ate-controller` N renders.
+`ate-controller` upgrades after the workers. So the workers start the `ateworker` N+1 image with the Deployment `ate-controller` N renders.
 
-Within a major, `ate-controller` renders the same worker pod template for the same WorkerPool. New `ateom` behavior comes from the image or from a new WorkerPool field, not from the template. So `ateom` accepts the flags and environment the template passes for the whole major, and no WorkerPool rolls at `ate-controller`'s step, in an upgrade or a rollback.
+Within a major, `ate-controller` renders the same worker pod template for the same WorkerPool. New `ateworker` behavior comes from the image or from a new WorkerPool field, not from the template. So `ateworker` accepts the flags and environment the template passes for the whole major, and no WorkerPool rolls at `ate-controller`'s step, in an upgrade or a rollback.
 
 ### API fields
 
@@ -58,15 +60,15 @@ Servers:
 
 * `ate-api-server` rejects a request that carries a field it does not know, with `INVALID_ARGUMENT`.
 * `ate-api-server` drops the fields it does not know when it reads a stored object, and serves the reduced object. Such a field was written by a newer replica, during `ate-api-server`'s roll or before a rollback, and this release cannot validate it. Rejecting it would make the object unreadable. Keeping it would serve a field this release cannot validate.
-* `atelet` rejects fields it does not know. Its callers, `ate-api-server` and `ateom`, are never newer than it during an upgrade or a rollback in the supported order, so an unknown field means the upgrade order was not followed.
-* `ateom` rejects fields it does not know. Its caller, `atelet`, can be one release newer, so `atelet` sends a new field only on releases after `ateom` learns it (two-step releases).
+* `atelet` rejects fields it does not know. Its callers, `ate-api-server` and `ateworker`, are never newer than it during an upgrade or a rollback in the supported order, so an unknown field means the upgrade order was not followed.
+* `ateworker` rejects fields it does not know. Its caller, `atelet`, can be one release newer, so `atelet` sends a new field only on releases after `ateworker` learns it (two-step releases).
 
 Clients:
 
 * A client that reads an object, changes it and writes it back keeps the unknown fields. An older client must not strip fields that a newer server still understands.
 * `kubectl-ate` rejects a manifest file that has fields it does not know, as the server does for a create.
 
-Wherever a caller can be newer than its server, the caller sends a new field only one release after the server learns it (two-step releases). Today that is `atelet` calling `ate-api-server` and `ateom`.
+Wherever a caller can be newer than its server, the caller sends a new field only one release after the server learns it (two-step releases). Today that is `atelet` calling `ate-api-server` and `ateworker`.
 
 ### CRDs
 
@@ -95,7 +97,7 @@ This section is about data one release writes and another release reads, whether
 * Data on the node: the directory layout and the files `atelet` keeps there.
   * What N writes, N+1 can read. What N+1 writes, N can read.
   * So a layout change takes two releases: N+1 reads the old and the new layout but still writes the old one, and N+2 writes the new one. This keeps a rollback possible.
-  * `atelet` passes the per-actor directories to `ateom` in the RPC, so only `atelet` knows the layout. The sockets `atelet` and `ateom` use to reach each other do not change within a major.
+  * `atelet` passes the per-actor directories to `ateworker` in the RPC, so only `atelet` knows the layout. The sockets `atelet` and `ateworker` use to reach each other do not change within a major.
 * Data in snapshots: `manifest.json`, which `atelet` writes and reads.
   * Within a major, a release reads the snapshot data any earlier release of that major wrote.
   * A new field must be safe to ignore. A release ignores manifest fields it does not know, so a snapshot taken at N+1 still restores after a rollback to N.
@@ -120,7 +122,7 @@ To move from N to N+1, in this order, waiting for each step to finish:
 8. The rest of the substrate system bundle: what no step above deploys.
 9. Clients.
 
-Rollback from N+1 to N is the same list in reverse, with release N. Clients stop sending N+1 fields before `ate-api-server` goes back, and `atelet` goes back only after every worker is back at N. Rolling back further than N is not supported.
+Rollback from N+1 to N is the same list in reverse, with release N, except that the schema migration and step 8 are not undone. Clients stop sending N+1 fields before `ate-api-server` goes back, and `atelet` goes back only after every worker is back at N. Rolling back further than N is not supported.
 
 ### Skipping releases
 
