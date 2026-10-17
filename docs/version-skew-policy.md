@@ -40,7 +40,7 @@ The components are ordered: `podcertificate-controller`, `atelet`, workers, `ate
 
 So during an upgrade from N to N+1, a new `atelet` drives old `ateworker` processes on its node, a new `atelet` calls an old `ate-api-server`, an old `ate-controller` renders Deployments for new workers, and old `ate-controller` and clients talk to a new `ate-api-server`.
 
-The reverse pairs are not supported: in particular, a worker must not be newer than the `atelet` on its node, and `ate-api-server` must not be newer than any worker. `ate-api-server` reaches the workers through `atelet`, so it must not ask a worker for something that worker's release cannot do.
+The reverse pairs are not supported: in particular, a worker must not be newer than the `atelet` on its node, and `ate-api-server` must not be newer than any worker. `ate-api-server` reaches the workers through `atelet`, and a new `ate-api-server` may rely on new worker behavior behind existing fields, so the workers go first.
 
 ## Requirement of a release
 
