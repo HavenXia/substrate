@@ -58,11 +58,11 @@ ActorTemplate, worker pool, test, and manual walkthrough are otherwise the same.
 
 ```bash
 # Envoy (default)
-./hack/install-ate-kind.sh --deploy-ate-system --credential-provider='{"name":"k8s.io"}' \
+go run ./cmd/ate-setup --kind deploy ate-system --credential-provider='{"name":"k8s.io"}' \
   --ingress-allowed-spiffe-ids=spiffe://cluster.local/ns/ate-system/sa/atenet-client
 
 # agentgateway
-./hack/install-ate-kind.sh --deploy-ate-system --atenet-dataplane=agentgateway --credential-provider='{"name":"k8s.io"}' \
+go run ./cmd/ate-setup --kind deploy ate-system --atenet-dataplane=agentgateway --credential-provider='{"name":"k8s.io"}' \
   --ingress-allowed-spiffe-ids=spiffe://cluster.local/ns/ate-system/sa/atenet-client
 ```
 
@@ -94,7 +94,7 @@ rejects that option with agentgateway rather than silently omitting it.
   (step 3 below) and `kubectl ate get egress-policy` reads it back; the e2e suites create theirs
   with `e2e.EnsureEgressPolicy`. An `all` rule reproduces the pre-policy behavior.
 - **Actor-identity trust** — the gateway mounts the `actor-id-ca-certs` Secret, a cert-only copy of
-  the actor-identity CA root that `hack/install-ate.sh` derives from `actor-id-ca-pool` (which also
+  the actor-identity CA root that `ate-setup` derives from `actor-id-ca-pool` (which also
   holds the CA signing key and is deliberately *not* mounted here).
 
 ## Prerequisites
@@ -107,7 +107,7 @@ rejects that option with agentgateway rather than silently omitting it.
 ## Deploy the demo fixture
 
 ```bash
-go run ./cmd/ate-setup deploy demo egress
+go run ./cmd/ate-setup --kind deploy demo egress
 ```
 
 The install applies the worker pool, creates the `ate-demo-egress` atespace and

@@ -25,9 +25,9 @@ It allows you to run arbitrary commands in an sandboxed, isolated container (run
 ### 1. Build and Deploy
 
 > [!NOTE]
-> Do not manually edit the `demos/sandbox/*.yaml.tmpl` manifests. The installation script automatically injects your `${BUCKET_NAME}` environment variable during deployment.
+> Do not manually edit the `demos/sandbox/*.yaml.tmpl` manifests. `ate-setup` automatically injects your `${BUCKET_NAME}` environment variable during deployment.
 
-Use the core installation script to build the image and deploy the demo to your cluster:
+Use `ate-setup` to build the image and deploy the demo to your cluster:
 
 ```bash
 go run ./cmd/ate-setup deploy demo sandbox

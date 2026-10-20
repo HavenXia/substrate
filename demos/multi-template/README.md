@@ -19,8 +19,8 @@ or namespace.
 ### 1. Build and Deploy
 
 > [!NOTE]
-> Do not manually edit the `demos/multi-template/*.yaml.tmpl` manifests. The
-> installation script automatically injects your `${BUCKET_NAME}` environment
+> Do not manually edit the `demos/multi-template/*.yaml.tmpl` manifests.
+> `ate-setup` automatically injects your `${BUCKET_NAME}` environment
 > variable during deployment.
 
 ```bash

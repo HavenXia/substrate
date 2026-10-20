@@ -19,7 +19,7 @@ The demo uses two kinds of resources: the `WorkerPool` is a Kubernetes CRD, whil
 
 > [!NOTE]
 > Do not manually edit `demos/counter/counter.yaml.tmpl` or
-> `demos/counter/counter-template.yaml.tmpl`. The installation script
+> `demos/counter/counter-template.yaml.tmpl`. `ate-setup`
 > automatically injects your `${BUCKET_NAME}` environment variable during
 > deployment.
 
@@ -59,17 +59,17 @@ go run ./cmd/ate-setup deploy demo counter-microvm
 
 <details>
 <summary>Installation on GVisor</summary>
-Use the core installation script to build the image and deploy the demo to your cluster:
+Use `ate-setup` to build the image and deploy the demo to your cluster:
 
 ```bash
-./hack/install-ate.sh --deploy-demo-counter
+go run ./cmd/ate-setup deploy demo counter
 ```
 
 To enable validation of reading from an external volume (e.g.
 `/external-data/test.txt`), run:
 
 ```bash
-./hack/install-ate.sh --deploy-demo-counter-with-external-volume --preview=ExternalVolumes
+go run ./cmd/ate-setup deploy demo counter --with-external-volume --preview=ExternalVolumes
 ```
 
 This command will:
