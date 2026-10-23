@@ -129,16 +129,7 @@ Do not add `reserved` statements to protos, deprecated aliases, fallbacks for ol
 
 ## Version Skew
 
-From v1.0.0, changes must keep upgrades and rollbacks working under [docs/version-skew-policy.md](docs/version-skew-policy.md). Components upgrade in this order, and each may be one release newer than those after it: `podcertificate-controller`, `atelet`, workers, `ate-api-server`, `ate-controller`, `atenet`, clients. A rollback runs the order in reverse.
-
-- A caller that upgrades before its server, such as `atelet` calling `ateworker`, sends a new field only from the minor release after the server learns it. A caller that upgrades after its server may use the field in the same release.
-- Within a major, `ate-controller` renders the same worker pod template for a WorkerPool. Give `ateworker` new behavior through its image or a new WorkerPool field. Do not add flags or environment variables to the template.
-- CRD changes only add optional fields.
-- Database migrations follow [docs/dev/postgresql-schema-evolution.md](docs/dev/postgresql-schema-evolution.md).
-- A change to the layout or files `atelet` keeps on the node takes two minor releases. The first reads the old and new form and still writes the old one. The next writes the new one. The sockets in `internal/nodepath` do not change within a major.
-- Snapshot `manifest.json` changes only add fields that are safe to ignore. A release reads every manifest an earlier release of its major wrote.
-- A release that changes a sandbox version adds it to the default SandboxConfig. It keeps the previous release's version and its assets, unless that version has a known vulnerability.
-- Resources in the system bundle step must work with components one release older and newer, because a rollback does not undo them. Anything a new component needs ships with that component.
+From v1.0.0, changes must keep upgrades and rollbacks working under [docs/version-skew-policy.md](docs/version-skew-policy.md). Read it before you change an RPC, a CRD, the worker pod template, a database migration, or a file `atelet` and `ateworker` share on the node.
 
 ## Commit Messages
 
