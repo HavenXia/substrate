@@ -129,7 +129,7 @@ Do not add `reserved` statements to protos, deprecated aliases, fallbacks for ol
 
 ## Version Skew
 
-From v1.0.0, changes must keep upgrades and rollbacks working under [docs/version-skew-policy.md](docs/version-skew-policy.md). Read it before you change an RPC, a CRD, the worker pod template, a database migration, or a file `atelet` and `ateworker` share on the node.
+From v1.0.0, changes must keep upgrades and rollbacks working under [docs/version-skew-policy.md](docs/version-skew-policy.md). Read it before you change an RPC, a CRD, the worker pod template, a database migration, or file(s) that `atelet` and `ateworker` share on a node.
 
 ## Commit Messages
 
