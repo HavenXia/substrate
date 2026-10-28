@@ -26,6 +26,7 @@ import (
 	"go.ate.dev/substrate/api/ateapi/v1"
 	atev1 "go.ate.dev/substrate/api/infra/k8s/ate/v1"
 	"go.ate.dev/substrate/internal/installdefaults"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
@@ -46,6 +47,11 @@ const workerPodLabel = "ate.dev/worker-pool"
 // workerPoolIndex maps a WorkerPool namespace/name to the worker Pods labeled
 // as members of that pool.
 const workerPoolIndex = "worker-pool"
+
+// rpcTimeout bounds each call to ate-api-server, so a call that hangs fails
+// instead of holding one of the syncer's goroutines. It leaves room for
+// DeleteWorker, which can wait 30s on atelet.
+const rpcTimeout = time.Minute
 
 // workerKey identifies the pod incarnation a queued event concerns. namespace
 // and name locate the pod in the informer, which is indexed by namespace/name
@@ -291,6 +297,13 @@ func (s *WorkerPoolSyncer) reconcile(ctx context.Context, key workerKey) error {
 	return s.createOrUpdateWorker(ctx, key, pod)
 }
 
+// callWithTimeout makes one call to ate-api-server, bounded by rpcTimeout.
+func callWithTimeout[Request, Response any](ctx context.Context, call func(context.Context, Request, ...grpc.CallOption) (Response, error), request Request) (Response, error) {
+	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	defer cancel()
+	return call(ctx, request)
+}
+
 // createOrUpdateWorker registers the pod's Worker, or brings the registered
 // one in line with the pod. A Worker is registered UNAVAILABLE and marked
 // available only while its pod is Ready. Its epochs, IPs, capacity and runtimes
@@ -311,7 +324,7 @@ func (s *WorkerPoolSyncer) createOrUpdateWorker(ctx context.Context, key workerK
 
 	available := isWorkerAvailable(pod)
 
-	w, err := s.client.GetWorker(ctx, &ateapi.GetWorkerRequest{Worker: key.workerRef()})
+	w, err := callWithTimeout(ctx, s.client.GetWorker, &ateapi.GetWorkerRequest{Worker: key.workerRef()})
 	if status.Code(err) == codes.NotFound {
 		// node_name is required and immutable, so the pod is registered once it
 		// is scheduled; the update that binds it re-enqueues the pod.
@@ -336,7 +349,7 @@ func (s *WorkerPoolSyncer) createOrUpdateWorker(ctx context.Context, key workerK
 		// ALREADY_EXISTS means we lost a create race; requeue and converge via
 		// the update path. INVALID_ARGUMENT is terminal — see
 		// processNextWorkItem.
-		w, err = s.client.CreateWorker(ctx, &ateapi.CreateWorkerRequest{Worker: worker})
+		w, err = callWithTimeout(ctx, s.client.CreateWorker, &ateapi.CreateWorkerRequest{Worker: worker})
 		if err != nil {
 			return err
 		}
@@ -349,7 +362,7 @@ func (s *WorkerPoolSyncer) createOrUpdateWorker(ctx context.Context, key workerK
 	// re-fetches the worker.
 	if !available && w.GetStatus().GetState() == ateapi.WorkerState_WORKER_STATE_ACTIVE {
 		slog.InfoContext(ctx, "Syncer: marking worker unavailable (pod not Ready)", key.logAttrs()...)
-		marked, err := s.client.MarkWorkerUnavailable(ctx, &ateapi.MarkWorkerUnavailableRequest{Worker: key.workerRef()})
+		marked, err := callWithTimeout(ctx, s.client.MarkWorkerUnavailable, &ateapi.MarkWorkerUnavailableRequest{Worker: key.workerRef()})
 		if err != nil {
 			return err
 		}
@@ -369,7 +382,7 @@ func (s *WorkerPoolSyncer) createOrUpdateWorker(ctx context.Context, key workerK
 		changed = true
 	}
 	if changed {
-		w, err = s.client.UpdateWorker(ctx, &ateapi.UpdateWorkerRequest{Worker: w})
+		w, err = callWithTimeout(ctx, s.client.UpdateWorker, &ateapi.UpdateWorkerRequest{Worker: w})
 		if err != nil {
 			return err
 		}
@@ -378,7 +391,7 @@ func (s *WorkerPoolSyncer) createOrUpdateWorker(ctx context.Context, key workerK
 	// A DRAINING Worker is left alone: its pod is on its way out.
 	if available && w.GetStatus().GetState() == ateapi.WorkerState_WORKER_STATE_UNAVAILABLE {
 		slog.InfoContext(ctx, "Syncer: marking worker available (pod Ready)", key.logAttrs()...)
-		_, err = s.client.MarkWorkerAvailable(ctx, &ateapi.MarkWorkerAvailableRequest{Worker: key.workerRef()})
+		_, err = callWithTimeout(ctx, s.client.MarkWorkerAvailable, &ateapi.MarkWorkerAvailableRequest{Worker: key.workerRef()})
 		return err
 	}
 	return nil
@@ -437,7 +450,7 @@ func (s *WorkerPoolSyncer) deleteWorkerPod(ctx context.Context, key workerKey, p
 // deleted gracefully; a replacement from its ReplicaSet has no Worker, so is
 // left alone.
 func (s *WorkerPoolSyncer) reconcileMissingPool(ctx context.Context, key workerKey, pod *corev1.Pod, poolName string) error {
-	_, err := s.client.GetWorker(ctx, &ateapi.GetWorkerRequest{Worker: key.workerRef()})
+	_, err := callWithTimeout(ctx, s.client.GetWorker, &ateapi.GetWorkerRequest{Worker: key.workerRef()})
 	if status.Code(err) == codes.NotFound {
 		return nil
 	}
@@ -518,7 +531,7 @@ func workerSPIFFEID(pod *corev1.Pod) string {
 // and retries against the updated record.
 func (s *WorkerPoolSyncer) markWorkerDraining(ctx context.Context, key workerKey) error {
 	slog.InfoContext(ctx, "Syncer: marking worker draining (pod deleting)", key.logAttrs()...)
-	_, err := s.client.DrainWorker(ctx, &ateapi.DrainWorkerRequest{Worker: key.workerRef()})
+	_, err := callWithTimeout(ctx, s.client.DrainWorker, &ateapi.DrainWorkerRequest{Worker: key.workerRef()})
 	if status.Code(err) == codes.NotFound {
 		return nil
 	}
@@ -534,7 +547,7 @@ func (s *WorkerPoolSyncer) markWorkerDraining(ctx context.Context, key workerKey
 // NOT_FOUND is success. Idempotency lives here, at the caller, so re-driving a
 // reconcile is safe.
 func (s *WorkerPoolSyncer) reconcileDeadWorker(ctx context.Context, key workerKey) error {
-	_, err := s.client.DeleteWorker(ctx, &ateapi.DeleteWorkerRequest{Worker: key.workerRef()})
+	_, err := callWithTimeout(ctx, s.client.DeleteWorker, &ateapi.DeleteWorkerRequest{Worker: key.workerRef()})
 	if status.Code(err) == codes.NotFound {
 		return nil
 	}
@@ -605,7 +618,7 @@ func (s *WorkerPoolSyncer) listWorkersPageWithRetry(ctx context.Context, pageTok
 		Cap:   s.listCap,
 	}
 	for {
-		page, err := s.client.ListWorkers(ctx, &ateapi.ListWorkersRequest{Options: &ateapi.ListOptions{PageSize: 1000, PageToken: pageToken}})
+		page, err := callWithTimeout(ctx, s.client.ListWorkers, &ateapi.ListWorkersRequest{Options: &ateapi.ListOptions{PageSize: 1000, PageToken: pageToken}})
 		if err == nil {
 			return page, nil
 		}
