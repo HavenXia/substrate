@@ -9,11 +9,13 @@ The demo uses two kinds of resources: the `WorkerPool` is a Kubernetes CRD, whil
 ## Prerequisites
 
 - A k8s cluster with Agent Substrate installed as in the [Quickstart](../../README.md#quickstart-development)
-  or [GKE Quickstart](../../README.md#gke-quickstart-development).
-- `ko` installed for building images.
-- A GCS bucket for storing snapshots (configured via `BUCKET_NAME` env var).
+  (with `ATE_INSTALL_KIND=true` exported in your shell) or [GKE Quickstart](../../README.md#gke-quickstart-development).
 
 ## How to Run on Agent Substrate
+
+The [Quickstart](../../README.md#quickstart-development) already deploys this
+demo, creates `my-counter-1` and starts its proxy on port `8000`. If you ran
+it, skip to [How to Use](#how-to-use).
 
 ### 1. Build and Deploy
 
@@ -209,7 +211,8 @@ kubectl ate delete actor my-counter-1 -a ate-demo-counter
 `counter.go` also listens on a second, configurable port (`--extra-port=9090`
 in this demo's template) to demonstrate atenet-router's arbitrary-port ingress
 support. Pass `[local-port:]remote-port` arguments to `kubectl ate proxy actor`
-to forward additional ports:
+to forward additional ports. This proxy also takes port `8000`, so stop the
+earlier one (such as the Quickstart's) first:
 
 <details>
 <summary>Non standard port with MicroVM</summary>

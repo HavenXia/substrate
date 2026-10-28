@@ -33,7 +33,12 @@
 
 set -o errexit -o nounset -o pipefail
 
-CTX="${KUBECTL_CONTEXT:-kind-kind}"
+# Target the cluster ate-setup deploys to: KUBECTL_CONTEXT, else the kind
+# cluster when ATE_INSTALL_KIND=true, else the current context.
+if [[ -z "${KUBECTL_CONTEXT:-}" && "${ATE_INSTALL_KIND:-}" == "true" ]]; then
+  KUBECTL_CONTEXT="kind-${KIND_CLUSTER_NAME:-kind}"
+fi
+CTX="${KUBECTL_CONTEXT:-$(kubectl config current-context)}"
 # The actor lives in the demo's atespace: --template resolves the
 # template by name within the actor's own atespace.
 ATESPACE="${ATESPACE:-ate-demo-egress}"

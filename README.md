@@ -118,12 +118,16 @@ To quickly set up the complete environment:
 # create cluster and local registry
 hack/create-kind-cluster.sh
 
+# make ate-setup target the kind cluster; set this in every shell that runs
+# ate-setup, including for the demo walkthroughs
+export ATE_INSTALL_KIND=true
+
 # install Substrate
-go run ./cmd/ate-setup --kind deploy ate-system --credential-provider='{"name":"k8s.io"}' \
+go run ./cmd/ate-setup deploy ate-system --credential-provider='{"name":"k8s.io"}' \
   --ingress-allowed-spiffe-ids=spiffe://cluster.local/ns/ate-system/sa/atenet-client
 
 # install counter demo
-go run ./cmd/ate-setup --kind deploy demo counter
+go run ./cmd/ate-setup deploy demo counter
 
 # install kubectl-ate
 go install ./cmd/kubectl-ate

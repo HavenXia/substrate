@@ -53,18 +53,11 @@ intercepted and carried over mTLS to a gateway that verifies who is making the r
 
 ## Choose a dataplane
 
-The dataplane is selected when installing `ate-system`, not when installing this demo. The Actor,
-ActorTemplate, worker pool, test, and manual walkthrough are otherwise the same.
-
-```bash
-# Envoy (default)
-go run ./cmd/ate-setup --kind deploy ate-system --credential-provider='{"name":"k8s.io"}' \
-  --ingress-allowed-spiffe-ids=spiffe://cluster.local/ns/ate-system/sa/atenet-client
-
-# agentgateway
-go run ./cmd/ate-setup --kind deploy ate-system --atenet-dataplane=agentgateway --credential-provider='{"name":"k8s.io"}' \
-  --ingress-allowed-spiffe-ids=spiffe://cluster.local/ns/ate-system/sa/atenet-client
-```
+The dataplane is selected when installing `ate-system`, not when installing this demo. Install as
+in the [Quickstart](../../README.md#quickstart-development) or
+[GKE Quickstart](../../README.md#gke-quickstart-development); for agentgateway, add
+`--atenet-dataplane=agentgateway` to `deploy ate-system`. The Actor, ActorTemplate, worker pool,
+test, and manual walkthrough are otherwise the same.
 
 | | Envoy | agentgateway |
 | --- | --- | --- |
@@ -99,15 +92,15 @@ rejects that option with agentgateway rather than silently omitting it.
 
 ## Prerequisites
 
-- A kind cluster with Agent Substrate installed (`hack/create-kind-cluster.sh`, followed by one of
-  the [dataplane installation commands above](#choose-a-dataplane)). Egress is enabled by the
-  ateapi flag above.
-- `ko`, `kubectl`, and `kubectl-ate` (`go install ./cmd/kubectl-ate`).
+- A k8s cluster with Agent Substrate installed as in the [Quickstart](../../README.md#quickstart-development)
+  (with `ATE_INSTALL_KIND=true` exported in your shell) or [GKE Quickstart](../../README.md#gke-quickstart-development), with the dataplane
+  [chosen above](#choose-a-dataplane). Egress is enabled by the ateapi flag above.
+- `kubectl` and `kubectl-ate` (`go install ./cmd/kubectl-ate`).
 
 ## Deploy the demo fixture
 
 ```bash
-go run ./cmd/ate-setup --kind deploy demo egress
+go run ./cmd/ate-setup deploy demo egress
 ```
 
 The install applies the worker pool, creates the `ate-demo-egress` atespace and

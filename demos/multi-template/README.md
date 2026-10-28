@@ -10,9 +10,7 @@ or namespace.
 ## Prerequisites
 
 - A k8s cluster with Agent Substrate installed as in the [Quickstart](../../README.md#quickstart-development)
-  or [GKE Quickstart](../../README.md#gke-quickstart-development).
-- `ko` installed for building images.
-- A GCS bucket for storing snapshots (configured via `BUCKET_NAME` env var).
+  (with `ATE_INSTALL_KIND=true` exported in your shell) or [GKE Quickstart](../../README.md#gke-quickstart-development).
 
 ## How to Run on Agent Substrate
 

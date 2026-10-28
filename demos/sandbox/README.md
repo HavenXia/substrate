@@ -15,9 +15,7 @@ It allows you to run arbitrary commands in an sandboxed, isolated container (run
 ## Prerequisites
 
 - A k8s cluster with Agent Substrate installed as in the [Quickstart](../../README.md#quickstart-development)
-  or [GKE Quickstart](../../README.md#gke-quickstart-development).
-- `ko` installed for building images.
-- A GCS bucket for storing snapshots (configured in `demos/sandbox/sandbox-template.yaml.tmpl`).
+  (with `ATE_INSTALL_KIND=true` exported in your shell) or [GKE Quickstart](../../README.md#gke-quickstart-development).
 - `kubectl-ate` CLI installed (can be installed via `go install ./cmd/kubectl-ate`).
 
 ## How to Run on Agent Substrate
