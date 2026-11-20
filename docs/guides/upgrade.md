@@ -203,9 +203,9 @@ kubectl ate get actors -A
 go run ./cmd/ate-setup deploy ate-controller --config ~/ate-upgrade/new.yaml
 ```
 
-This applies the new CRDs and ate-controller's RBAC, then deploys the new `ate-controller`. Rerunning is safe. Within a major the worker pod template stays the same, so no pool rolls.
+This applies the new CRDs and ate-controller's RBAC, then deploys the new `ate-controller`. Rerunning is safe. No pool rolls, unless the release notes say the release changes the worker pod template. Then every pool rolls again here, as in step 3.
 
-- **Done:** the command exits 0, `kubectl -n ate-system get pods -l app=ate-controller` shows one pod, Running, with RESTARTS 0, and a minute later `kubectl get pods -A -l ate.dev/worker-pool` shows no worker pod younger than this step.
+- **Done:** the command exits 0, `kubectl -n ate-system get pods -l app=ate-controller` shows one pod, Running, with RESTARTS 0, and a minute later `kubectl get pods -A -l ate.dev/worker-pool` shows no worker pod younger than this step. If the release changes the worker pod template, every pool is done rolling instead, as in step 3.
 - **Stuck:** the new ate-controller pod keeps restarting. [Roll back step 4](#roll-back-step-4).
 
 #### 4c. atenet
@@ -283,7 +283,7 @@ go run ./cmd/ate-setup deploy apiserver --config ~/ate-upgrade/old.yaml
 go install ./cmd/kubectl-ate
 ```
 
-`deploy sandboxconfig` removes a sandbox version new in this release, so actors suspended on it resume without their memory. `deploy ate-controller` restores the old CRDs, RBAC and `ate-controller`. No pool rolls. 
+`deploy sandboxconfig` removes a sandbox version new in this release, so actors suspended on it resume without their memory. `deploy ate-controller` restores the old CRDs, RBAC and `ate-controller`. No pool rolls, unless the release changed the worker pod template. Then every pool rolls back to the old template here. 
 
 Fields that the new release added to WorkerPools, SandboxConfigs or CSIDriverConfigs are dropped from those objects. Remove them from your YAML files too, or `kubectl apply` rejects the files.
 

@@ -57,9 +57,11 @@ The skew rules above hold only if every release keeps the following.
 
 ### Worker pod template
 
-`ate-controller` upgrades after the workers. So the workers start the `ateworker` N+1 image with the Deployment `ate-controller` N renders.
+`ate-controller` upgrades after the workers. So the workers start the `ateworker` N+1 image with the Deployment `ate-controller` N renders. `ateworker` N+1 must run with that pod template: it accepts every flag and environment variable the template passes, and needs nothing that only the N+1 template provides.
 
-Within a major, `ate-controller` renders the same worker pod template for the same WorkerPool. New `ateworker` behavior comes from the image or from a new WorkerPool field, not from the template. So `ateworker` accepts the flags and environment the template passes for the whole major, and no WorkerPool rolls at `ate-controller`'s step, in an upgrade or a rollback.
+A minor release may change the pod template `ate-controller` renders for a WorkerPool. Then every WorkerPool rolls a second time at `ate-controller`'s step, and a rollback rolls every WorkerPool at that step too. Each roll [evicts](api-guide.md#eviction) the actors on the workers it replaces, so the release notes of that release say that it changes the template.
+
+A release that keeps the template rolls no WorkerPool at `ate-controller`'s step, in an upgrade or a rollback. So new `ateworker` behavior comes from the image or from a new WorkerPool field where it can.
 
 ### API fields
 
